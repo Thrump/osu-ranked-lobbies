@@ -240,6 +240,12 @@ async function render_user(user_id, page_num) {
 
 
 async function route(new_url) {
+  if (new_url == '/osu_login') {
+    document.location = '/osu_login';
+    location.reload();
+    return;
+  }
+
   if (m = new_url.match(/\/create-lobby\//)) {
     document.title = 'New lobby - o!RL';
     document.querySelector('main').innerHTML = '';
