@@ -101,6 +101,9 @@ async function main() {
     await rejoin_lobbies();
   }
 
+  if (Config.CREATE_LOBBIES) {
+    create_lobby_if_needed();
+  }
   if (Config.APPLY_RANK_DECAY) {
     await apply_rank_decay();
   }
@@ -116,8 +119,6 @@ async function main() {
 // searching.
 async function create_lobby_if_needed() {
   const lobbies_to_create = [
-    {min: 3, max: 4, slug: '3*'},
-    {min: 4, max: 5, slug: '4*'},
     {min: 5, max: 5.5, slug: '5a*'},
     {min: 5.5, max: 6, slug: '5b*'},
     {min: 6, max: 7, slug: '6*'},
