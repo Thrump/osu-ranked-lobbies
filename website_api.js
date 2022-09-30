@@ -84,12 +84,14 @@ async function get_user_profile(user_id) {
     throw USER_NOT_FOUND;
   }
 
+  const month_ago_tms = Date.now() - (30 * 24 * 3600 * 1000);
   return {
     username: user.username,
     user_id: user.user_id,
     games_played: user.games_played,
     elo: Math.round(user.elo),
     rank: get_rank(user.elo),
+    is_ranked: (user.games_played > 5 && user.last_contest_tms > month_ago_tms),
   };
 }
 

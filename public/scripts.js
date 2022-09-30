@@ -212,9 +212,15 @@ async function render_user(user_id, page_num) {
   template.querySelector('.heading-right .subheading').href = `https://osu.ppy.sh/users/${json.user_id}`;
 
   const blocks = template.querySelectorAll('.user-focus-block');
-  blocks[0].innerHTML = `<span>${json.rank.text}</span><span>Rank #${json.rank.rank_nb}</span>`;
-  blocks[1].innerHTML = `<span>${json.games_played}</span><span>Games Played</span>`;
-  blocks[2].innerHTML = `<span>${json.elo}</span><span>Elo</span>`;
+  if (json.is_ranked) {
+    blocks[0].innerHTML = `<span>${json.rank.text}</span><span>Rank #${json.rank.rank_nb}</span>`;
+    blocks[1].innerHTML = `<span>${json.games_played}</span><span>Games Played</span>`;
+    blocks[2].innerHTML = `<span>${json.elo}</span><span>Elo</span>`;
+  } else {
+    blocks[0].innerHTML = `<span>Unranked</span><span>Rank #???</span>`;
+    blocks[1].innerHTML = `<span>${json.games_played}</span><span>Games Played</span>`;
+    blocks[2].remove();
+  }
   document.querySelector('main').appendChild(template);
 
   const matches_json = await get(`/api/user/${user_id}/matches/${page_num}`);
