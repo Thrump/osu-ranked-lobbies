@@ -106,10 +106,10 @@ function event_loop_hack() {
 // this method hourly to make the rank decay mechanism visible, NOT to
 // actually decay rank. (and yes, we use "elo" as a "display rank" in the
 // database, which is confusing)
-async function apply_rank_decay() {
+async function apply_rank_decay(recompute_all) {
   try {
     console.info('[Decay] Applying rank decay');
-    const month_ago_tms = Date.now() - (30 * 24 * 3600 * 1000);
+    const month_ago_tms = recompute_all ? 0 : Date.now() - (30 * 24 * 3600 * 1000);
     const players_stmt = databases.ranks.prepare(`
       SELECT user_id, approx_mu, approx_sig, last_contest_tms FROM user
       WHERE games_played > 4 AND last_contest_tms > ?`,
@@ -223,6 +223,8 @@ function update_mmr(lobby, contest_tms) {
     let outcomes = 0.0;
     let variance = 0.0;
     for (const opponent of players) {
+      if (player == opponent) continue;
+
       let score = 0.5;
       if (player.score > opponent.score) score = 1.0;
       if (player.score < opponent.score) score = 0.0;
@@ -244,26 +246,24 @@ function update_mmr(lobby, contest_tms) {
 
   // Step 8.
   for (const player of players) {
-    if (!player.user_id) {
-      // If the bot restarted at the wrong timing, it can miss some user IDs.
-      // Ignore the scores for these players.
-      continue;
-    }
-
     player.approx_mu = player.new_approx_mu * 173.7178 + 1500.0;
     player.approx_sig = Math.min(350.0, player.new_approx_sig * 173.7178);
     player.last_contest_tms = contest_tms;
     player.elo = player.approx_mu - (3 * player.approx_sig);
     player.games_played++;
 
-    stmts.insert_score.run(
-        player.user_id, contest_id, player.score, player.last_contest_tms,
-        lobby.beatmap_id, player.old_approx_mu, player.approx_mu, player.approx_sig,
-    );
-    stmts.update_user.run(
-        player.elo, player.approx_mu, player.approx_sig,
-        player.games_played, player.last_contest_tms, player.user_id,
-    );
+    // If the bot restarted at the wrong timing, it can miss some user IDs.
+    // We can't save the scores without it.
+    if (player.user_id) {
+      stmts.insert_score.run(
+          player.user_id, contest_id, player.score, player.last_contest_tms,
+          lobby.beatmap_id, player.old_approx_mu, player.approx_mu, player.approx_sig,
+      );
+      stmts.update_user.run(
+          player.elo, player.approx_mu, player.approx_sig,
+          player.games_played, player.last_contest_tms, player.user_id,
+      );
+    }
   }
 
   // Return the users whose rank's display text changed
