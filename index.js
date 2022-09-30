@@ -58,20 +58,16 @@ async function main() {
     setInterval(apply_rank_decay, 3600 * 1000);
   }
 
-  bancho.on('pm', async (msg) => {
+  bancho.on('pm', (msg) => {
     for (const cmd of commands) {
       const match = cmd.regex.exec(msg.message);
       if (match) {
         if (!cmd.modes.includes('pm')) {
-          await bancho.privmsg(msg.from, 'You should send that command in #multiplayer.');
+          bancho.privmsg(msg.from, 'You should send that command in #multiplayer.');
           return;
         }
 
-        try {
-          await cmd.handler(msg, match, null);
-        } catch (err) {
-          capture_sentry_exception(err);
-        }
+        cmd.handler(msg, match, null).catch(capture_sentry_exception);
         return;
       }
     }

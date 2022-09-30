@@ -253,9 +253,9 @@ async function skip_command(msg, match, lobby) {
         clearTimeout(lobby.countdown);
         lobby.countdown = -1;
 
-        await lobby.send(`Skipped map because download is unavailable [${lobby.map_data.beatmapset.availability.more_information} (more info)].`);
         stmts.dmca_map.run(lobby.beatmap_id);
         await lobby.select_next_map();
+        await lobby.send(`Skipped previous map because download was unavailable [${lobby.map_data.beatmapset.availability.more_information} (more info)].`);
         return;
       }
     } catch (err) {
