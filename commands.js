@@ -1,6 +1,6 @@
 import bancho from './bancho.js';
 import databases from './database.js';
-import {get_rank} from './elo_mmr.js';
+import {get_rank} from './glicko.js';
 import {get_map_data} from './profile_scanner.js';
 import {load_collection, init_lobby as init_collection_lobby} from './collection.js';
 import {init_lobby as init_ranked_lobby} from './ranked.js';
@@ -46,9 +46,6 @@ async function collection_command(msg, match, lobby) {
 
 async function ranked_command(msg, match, lobby) {
   lobby.created_just_now = true;
-  lobby.data.fixed_star_range = false;
-  lobby.data.min_stars = 0.0;
-  lobby.data.max_stars = 11.0;
   await init_ranked_lobby(lobby);
 }
 
@@ -304,6 +301,12 @@ const commands = [
   },
   {
     regex: /^!about$/gi,
+    handler: about_command,
+    creator_only: false,
+    modes: ['pm', 'new', 'collection', 'ranked'],
+  },
+  {
+    regex: /^!info/gi,
     handler: about_command,
     creator_only: false,
     modes: ['pm', 'new', 'collection', 'ranked'],

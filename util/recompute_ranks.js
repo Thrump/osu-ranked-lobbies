@@ -9,7 +9,7 @@
 import ProgressBar from 'progress';
 
 import databases from '../database.js';
-import {update_mmr, apply_rank_decay} from '../elo_mmr.js';
+import {update_mmr} from '../glicko.js';
 
 
 const players_stmt = databases.ranks.prepare('SELECT * FROM user WHERE games_played > 0');
@@ -98,7 +98,5 @@ for (const contest of contests) {
 
   bar.tick(1);
 }
-
-apply_rank_decay(true);
 
 console.info('Done!');

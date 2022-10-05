@@ -1,81 +1,20 @@
 import bancho from './bancho.js';
 import databases from './database.js';
-import {update_mmr} from './elo_mmr.js';
-import {remove_lobby_listing} from './discord_updates.js';
+import {update_mmr} from './glicko.js';
 
 import {scan_user_profile} from './profile_scanner.js';
 import Config from './util/config.js';
 
 
-const stmts = {
-  star_range_from_pp: databases.ranks.prepare(`
-    SELECT MIN(stars) AS min_stars, MAX(stars) AS max_stars FROM (
-      SELECT stars, (
-        ABS(? - aim_pp)
-        + ABS(? - speed_pp)
-      ) AS match_accuracy FROM map
-      WHERE length > 60 AND ranked IN (4, 5, 7) AND match_accuracy IS NOT NULL AND dmca = 0 AND mode = 0
-      ORDER BY match_accuracy LIMIT 1000
-    )`,
-  ),
-
-  select_map: databases.ranks.prepare(`
-    SELECT * FROM (
-      SELECT *, (
-        ABS(? - aim_pp)
-        + ABS(? - speed_pp)
-      ) AS match_accuracy FROM map
-      WHERE
-        stars >= ? AND stars <= ?
-        AND length > 60
-        AND ranked IN (4, 5, 7)
-        AND match_accuracy IS NOT NULL
-        AND dmca = 0
-        AND mode = 0
-      ORDER BY match_accuracy LIMIT 1000
-    ) ORDER BY RANDOM() LIMIT 1`,
-  ),
-
-  dmca_map: databases.ranks.prepare('UPDATE map SET dmca = 1 WHERE id = ?'),
-};
-
-
 async function set_new_title(lobby) {
   let new_title = '';
 
-  // Min stars: we prefer not displaying the decimals whenever possible
-  let fancy_min_stars;
-  if (Math.abs(lobby.data.min_stars - Math.round(lobby.data.min_stars)) <= 0.1) {
-    fancy_min_stars = Math.round(lobby.data.min_stars);
+  if (lobby.data.avg_sr) {
+    // TODO display lobby's avg sr instead of map sr
+    new_title = `${Math.round(lobby.map.stars, 0.1)}* x o!RL x Auto map select (!info)`;
   } else {
-    fancy_min_stars = Math.round(lobby.data.min_stars * 100) / 100;
+    new_title = `o!RL x Auto map select (!info)`;
   }
-
-  // Max stars: we prefer displaying .99 whenever possible
-  let fancy_max_stars;
-  if (lobby.data.max_stars > 11) {
-    // ...unless it's a ridiculously big number
-    fancy_max_stars = Math.round(Math.min(lobby.data.max_stars, 999));
-  } else {
-    if (Math.abs(lobby.data.max_stars - Math.round(lobby.data.max_stars)) <= 0.1) {
-      fancy_max_stars = (Math.round(lobby.data.max_stars) - 0.01).toFixed(2);
-    } else {
-      fancy_max_stars = Math.round(lobby.data.max_stars * 100) / 100;
-    }
-  }
-
-  if (lobby.data.max_stars - lobby.data.min_stars == 1 && lobby.data.min_stars % 1 == 0) {
-    // Simplify "4-4.99*" lobbies as "4*"
-    new_title = `${lobby.data.min_stars}*`;
-  } else {
-    new_title += `${fancy_min_stars}-${fancy_max_stars}*`;
-  }
-
-  // Title is limited to 50 characters, so only add extra stuff when able to
-  new_title += ' | o!RL';
-  if (new_title.length <= 39) new_title += ' | Auto map';
-  if (new_title.length <= 43) new_title += ' select';
-  if (new_title.length <= 41) new_title += ' (!about)';
 
   if (!Config.IS_PRODUCTION) {
     new_title = 'test lobby';
@@ -85,6 +24,10 @@ async function set_new_title(lobby) {
     await lobby.send(`!mp name ${new_title}`);
     lobby.name = new_title;
   }
+}
+
+async function update_median_pp(lobby) {
+  // TODO
 }
 
 function median(numbers) {
@@ -98,16 +41,6 @@ function median(numbers) {
 }
 
 async function select_next_map() {
-  const MAP_TYPES = {
-    1: 'graveyarded',
-    2: 'wip',
-    3: 'pending',
-    4: 'ranked',
-    5: 'approved',
-    6: 'qualified',
-    7: 'loved',
-  };
-
   this.voteskips = [];
   clearTimeout(this.countdown);
   this.countdown = -1;
@@ -116,42 +49,15 @@ async function select_next_map() {
     this.recent_maps.shift();
   }
 
-  let new_map = null;
-  let tries = 0;
-
-  // If we have a variable star range, get it from the current lobby pp
-  if (!this.data.fixed_star_range) {
-    const meta = stmts.star_range_from_pp.get(
-        this.median_aim,
-        this.median_speed,
-    );
-
-    this.data.min_stars = meta.min_stars;
-    this.data.max_stars = meta.max_stars;
-  }
-
-  do {
-    new_map = stmts.select_map.get(
-        this.median_aim,
-        this.median_speed,
-        this.data.min_stars,
-        this.data.max_stars,
-    );
-    tries++;
-
-    if (!new_map) break;
-  } while ((this.recent_maps.includes(new_map.id)) && tries < 10);
-  if (!new_map) {
-    await this.send(`I couldn't find a map. Either the star range is too small or the bot was too slow to scan your profile (and you may !skip in a few seconds).`);
-    return;
-  }
-
+  const new_map = null;
+  // TODO select new_map
   this.recent_maps.push(new_map.id);
   const pp = new_map.overall_pp;
 
   try {
     const sr = new_map.stars;
-    const flavor = `${MAP_TYPES[new_map.ranked]} ${sr.toFixed(2)}*, ${Math.round(pp)}pp`;
+    // TODO display map elo too?
+    const flavor = `${sr.toFixed(2)}*, ${Math.round(pp)}pp`;
     const map_name = `[https://osu.ppy.sh/beatmaps/${new_map.id} ${new_map.name}]`;
     const beatconnect_link = `[https://beatconnect.io/b/${new_map.set_id} [1]]`;
     const chimu_link = `[https://chimu.moe/d/${new_map.set_id} [2]]`;
@@ -166,55 +72,19 @@ async function select_next_map() {
 }
 
 
-// Updates the lobby's median_pp value.
-function update_median_pp(lobby) {
-  const aims = [];
-  const speeds = [];
-  const overalls = [];
-  const ars = [];
-  const elos = [];
-
-  for (const player of lobby.players) {
-    let aim_pp = player.aim_pp;
-    let speed_pp = player.speed_pp;
-    let overall_pp = player.overall_pp;
-
-    // Over 600pp, map selection is getting way too hard.
-    if (overall_pp > 600.0) {
-      const ratio = overall_pp / 600.0;
-      aim_pp /= ratio;
-      speed_pp /= ratio;
-      overall_pp /= ratio;
-    }
-
-    aims.push(aim_pp);
-    speeds.push(speed_pp);
-    overalls.push(overall_pp);
-
-    ars.push(player.avg_ar);
-    elos.push(player.elo);
-  }
-
-  aims.sort((a, b) => a - b);
-  speeds.sort((a, b) => a - b);
-  overalls.sort((a, b) => a - b);
-  ars.sort((a, b) => a - b);
-
-  lobby.median_aim = median(aims) * Config.difficulty;
-  lobby.median_speed = median(speeds) * Config.difficulty;
-  lobby.median_overall = median(overalls) * Config.difficulty;
-  lobby.median_ar = median(ars);
-  lobby.median_elo = median(elos);
-
-  return false;
-}
-
 async function init_lobby(lobby) {
+  // When API is down or instable, match scores can't get processed in real
+  // time. Workaround: process those later, when the API is working again.
+  // As long as less than 32 matches happen before the API goes back up,
+  // scores shouldn't get memory holed.
+  // TODO: verify API indeed stops at 32 matches, and the 32 last, not 32 first
+  //       (will need to check some other bot lobby in multi menu)
+  lobby.data.api_backlog = 0;
+
   lobby.match_participants = [];
   lobby.recent_maps = [];
   lobby.votekicks = [];
   lobby.countdown = -1;
-  lobby.median_overall = 0;
   lobby.select_next_map = select_next_map;
   lobby.data.mode = 'ranked';
   lobby.match_end_timeout = -1;
@@ -259,6 +129,7 @@ async function init_lobby(lobby) {
   lobby.on('playerLeft', async (player) => {
     // Dodgers get 0 score
     if (player.username in lobby.match_participants) {
+      // TODO: mark as dodged
       const score = {
         username: player.username,
         score: 0,
@@ -270,14 +141,8 @@ async function init_lobby(lobby) {
     }
 
     update_median_pp(lobby);
-
     if (lobby.nb_players == 0) {
-      if (!lobby.data.fixed_star_range) {
-        lobby.data.min_stars = 0.0;
-        lobby.data.max_stars = 11.0;
-        await set_new_title(lobby);
-      }
-      return;
+      await set_new_title(lobby);
     }
   });
 
@@ -297,9 +162,8 @@ async function init_lobby(lobby) {
       return;
     }
 
-    for (const username of players_to_kick) {
-      await lobby.send(`!mp kick ${username}`);
-    }
+    // TODO: mark player as kicked so they don't get "dodger" penalty
+    await lobby.send(`!mp kick ${players_to_kick[0]}`);
   };
 
   lobby.on('score', (score) => {
@@ -315,6 +179,15 @@ async function init_lobby(lobby) {
   lobby.on('matchFinished', async (scores) => {
     clearTimeout(lobby.match_end_timeout);
     lobby.match_end_timeout = -1;
+
+
+    try {
+      res = await fetch(`https://osu.ppy.sh/api/get_match?k=${Config.osu_v1api_key}&m=${lobby.id}`);
+    } catch (err) {
+      throw new Error(`Failed to fetch match info for lobby ${lobby.id}.`);
+      lobby.data.api_backlog = lobby.data.api_backlog + 1;
+    }
+
 
     const rank_updates = update_mmr(lobby);
     await lobby.select_next_map();
@@ -332,12 +205,6 @@ async function init_lobby(lobby) {
         }
       }
     }
-  });
-
-  lobby.on('close', async () => {
-    // Lobby closed (intentionally or not), clean up
-    bancho.joined_lobbies.splice(bancho.joined_lobbies.indexOf(lobby), 1);
-    await remove_lobby_listing(lobby.id);
   });
 
   lobby.on('allPlayersReady', async () => {
@@ -361,13 +228,11 @@ async function init_lobby(lobby) {
     await lobby.send(`!mp settings ${Math.random().toString(36).substring(2, 6)}`);
     await lobby.send('!mp clearhost');
     await lobby.send('!mp password');
-    if (lobby.data.is_scorev2) {
-      await lobby.send(`!mp set 0 3 16`);
-    } else {
-      await lobby.send(`!mp set 0 0 16`);
-    }
-
     await lobby.send('!mp mods freemod');
+
+    // Lobbies are ScoreV1 - but we ignore the results and get the full score info from osu's API.
+    // From that, we can calculate how much PP the play was worth instead of relying on score.
+    await lobby.send(`!mp set 0 0 16`);
   } else {
     await lobby.send(`!mp settings (restarted) ${Math.random().toString(36).substring(2, 6)}`);
   }

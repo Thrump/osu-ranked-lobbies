@@ -16,8 +16,9 @@ import {capture_sentry_exception} from './util/helpers.js';
 let oauth_token = null;
 
 async function osu_fetch(url, options) {
-  let res;
+  options = options || {};
 
+  let res;
   if (!oauth_token) {
     try {
       res = await fetch('https://osu.ppy.sh/oauth/token', {

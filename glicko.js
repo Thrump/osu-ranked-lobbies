@@ -3,7 +3,7 @@
 // - http://www.glicko.net/glicko/glicko2.pdf
 
 import databases from './database.js';
-import {update_discord_role} from './discord_updates.js';
+import {update_division} from './discord_updates.js';
 import Config from './util/config.js';
 import {capture_sentry_exception} from './util/helpers.js';
 
@@ -100,75 +100,6 @@ function event_loop_hack() {
   });
 }
 
-
-// This method does not actually change any player's elo or derivation, but
-// still updates their rank as if they played a game of 0 importance. We call
-// this method hourly to make the rank decay mechanism visible, NOT to
-// actually decay rank. (and yes, we use "elo" as a "display rank" in the
-// database, which is confusing)
-async function apply_rank_decay(recompute_all) {
-  try {
-    console.info('[Decay] Applying rank decay');
-    const month_ago_tms = recompute_all ? 0 : Date.now() - (30 * 24 * 3600 * 1000);
-    const players_stmt = databases.ranks.prepare(`
-      SELECT user_id, approx_mu, approx_sig, last_contest_tms FROM user
-      WHERE games_played > 4 AND last_contest_tms > ?`,
-    );
-    let players = players_stmt.all(month_ago_tms);
-
-    const update_elo_stmt = databases.ranks.prepare('UPDATE user SET elo = ? WHERE user_id = ?');
-    let i = 1;
-    const now = Date.now();
-    for (const player of players) {
-      if (i == 1 || i % 1000 == 0) {
-        console.info(`[Decay] Updating player elos (${i}/${players.length})`);
-      }
-
-      player.elo = player.approx_mu - (3 * get_new_deviation(player, now));
-      update_elo_stmt.run(player.elo, player.user_id);
-      i++;
-      await event_loop_hack();
-    }
-
-    i = 1;
-    const players_by_elo_stmt = databases.ranks.prepare(`
-      SELECT user_id FROM user
-      WHERE games_played > 4 AND last_contest_tms > ?
-      ORDER BY elo ASC`,
-    );
-    players = players_by_elo_stmt.all(month_ago_tms);
-
-    for (const player of players) {
-      if (i == 1 || i % 1000 == 0) {
-        console.info(`[Decay] Updating discord roles (${i}/${players.length})`);
-      }
-
-      const new_rank_text = get_rank_text(i / players.length);
-      await update_discord_role(player.user_id, new_rank_text);
-      await event_loop_hack();
-      i++;
-    }
-
-    i = 1;
-    const inactive_players = databases.ranks.prepare(
-        `SELECT user_id FROM user WHERE rank_text != 'Unranked' AND last_contest_tms < ?`,
-    ).all(month_ago_tms);
-    for (const player of inactive_players) {
-      if (i == 1 || i % 1000 == 0) {
-        console.info(`[Decay] Updating inactive player discord roles (${i}/${inactive_players.length})`);
-      }
-
-      await update_discord_role(player.user_id, 'Unranked');
-      await event_loop_hack();
-      i++;
-    }
-
-    console.info('[Decay] Done applying rank decay');
-  } catch (err) {
-    console.error('Failed to apply rank decay:', err);
-    capture_sentry_exception(err);
-  }
-}
 
 function update_mmr(lobby, contest_tms) {
   // Usually, we're in a live lobby, but sometimes we want to recompute all
@@ -301,7 +232,7 @@ function update_mmr(lobby, contest_tms) {
       player.rank_float = new_rank.ratio;
       player.rank_text = new_rank.text;
       update_rank_text_stmt.run(new_rank.text, player.user_id);
-      update_discord_role(player.user_id, new_rank.text); // async but don't care about result
+      update_division(player.user_id, new_rank.text); // async but don't care about result
     }
   }
 
@@ -358,4 +289,4 @@ function get_rank_text_from_id(osu_user_id) {
   return get_rank(res.elo).text;
 }
 
-export {update_mmr, get_rank, get_rank_text_from_id, apply_rank_decay};
+export {update_mmr, get_rank, get_rank_text_from_id};

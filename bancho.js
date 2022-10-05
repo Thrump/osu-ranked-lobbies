@@ -88,7 +88,7 @@ class BanchoClient extends EventEmitter {
     });
 
     return new Promise(async (resolve, reject) => {
-      const {BanchoLobby} = await import('./lobby.js');
+      const {BanchoLobby} = await import('./match.js');
 
       this._socket.on('data', (data) => {
         data = data.toString().replace(/\r/g, '');

@@ -261,9 +261,7 @@ async function route(new_url) {
 
     document.querySelector('.lobby-settings').addEventListener('change', (evt) => {
       if (evt.target.name == 'lobby-type') {
-        const ranked_settings = document.querySelector('main .ranked-settings');
         const custom_settings = document.querySelector('main .custom-settings');
-        ranked_settings.hidden = !ranked_settings.hidden;
         custom_settings.hidden = !custom_settings.hidden;
       }
     });
@@ -370,47 +368,6 @@ async function route(new_url) {
     });
   }
 }
-
-// Theme switch
-let theme = localStorage.getItem('theme') || 'dark';
-document.body.setAttribute('class', theme == 'light' ? '' : 'dark-mode');
-
-function toggleTheme() {
-  if (theme == 'dark') {
-    localStorage.setItem('theme', 'light');
-    document.body.setAttribute('class', '');
-    theme = 'light';
-  } else {
-    localStorage.setItem('theme', 'dark');
-    document.body.setAttribute('class', 'dark-mode');
-    theme = 'dark';
-  }
-}
-
-const lightThemeSwitcher = document.querySelector('.switcher-sun');
-const darkThemeSwitcher = document.querySelector('.switcher-moon');
-lightThemeSwitcher.addEventListener('click', toggleTheme);
-darkThemeSwitcher.addEventListener('click', toggleTheme);
-
-lightThemeSwitcher.addEventListener('mouseover', (ev) => {
-  lightThemeSwitcher.setAttribute('class', lightThemeSwitcher.getAttribute('class').replace('fadeout', '').trim()+' fadeout');
-  darkThemeSwitcher.setAttribute('class', darkThemeSwitcher.getAttribute('class').replace('fadein', '').trim()+' fadein');
-});
-
-lightThemeSwitcher.addEventListener('mouseout', (ev) => {
-  lightThemeSwitcher.setAttribute('class', lightThemeSwitcher.getAttribute('class').replace('fadeout', '').trim());
-  darkThemeSwitcher.setAttribute('class', darkThemeSwitcher.getAttribute('class').replace('fadein', '').trim());
-});
-
-darkThemeSwitcher.addEventListener('mouseover', (ev) => {
-  darkThemeSwitcher.setAttribute('class', darkThemeSwitcher.getAttribute('class').replace('fadeout', '').trim()+' fadeout');
-  lightThemeSwitcher.setAttribute('class', lightThemeSwitcher.getAttribute('class').replace('fadein', '').trim()+' fadein');
-});
-
-darkThemeSwitcher.addEventListener('mouseout', (ev) => {
-  darkThemeSwitcher.setAttribute('class', darkThemeSwitcher.getAttribute('class').replace('fadeout', '').trim());
-  lightThemeSwitcher.setAttribute('class', lightThemeSwitcher.getAttribute('class').replace('fadein', '').trim());
-});
 
 
 // User search

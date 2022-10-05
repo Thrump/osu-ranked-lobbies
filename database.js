@@ -1,113 +1,144 @@
 import Database from 'better-sqlite3';
 
 
-const discord = new Database('discord.db');
-discord.exec(`
-  CREATE TABLE IF NOT EXISTS auth_tokens (
-    discord_user_id TEXT,
-    ephemeral_token TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS user (
-    discord_id TEXT,
-    osu_id INTEGER,
-    osu_access_token TEXT,
-    osu_refresh_token TEXT,
-    discord_rank TEXT
-  )`,
-);
-
-const ranks = new Database('ranks.db');
-ranks.pragma('JOURNAL_MODE = WAL');
+const db = new Database('ranks.db');
+db.pragma('foreign_keys = ON');
+db.pragma('JOURNAL_MODE = WAL');
 
 if (process.argv[1].endsWith('recompute_ranks.js')) {
-  ranks.pragma('count_changes = OFF');
-  ranks.pragma('TEMP_STORE = MEMORY');
-  ranks.pragma('JOURNAL_MODE = OFF');
-  ranks.pragma('SYNCHRONOUS = OFF');
-  ranks.pragma('LOCKING_MODE = EXCLUSIVE');
+  db.pragma('count_changes = OFF');
+  db.pragma('TEMP_STORE = MEMORY');
+  db.pragma('JOURNAL_MODE = OFF');
+  db.pragma('SYNCHRONOUS = OFF');
+  db.pragma('LOCKING_MODE = EXCLUSIVE');
 }
 
-ranks.exec(`
-  CREATE TABLE IF NOT EXISTS lobby (
-    id INTEGER PRIMARY KEY,
-    data TEXT
+db.exec(`
+  CREATE TABLE IF NOT EXISTS full_map (
+    map_id        INTEGER PRIMARY KEY,
+
+    -- info from .osu file
+    name          TEXT    NOT NULL,
+    mode          INTEGER NOT NULL,           -- (0 = std, 1 = taiko, 2 = ctb, 3 = mania)
+    stars         REAL    NOT NULL,
+    pp            REAL    NOT NULL,
+    pp_aim        REAL,                       -- null for taiko, ctb, mania
+    pp_acc        REAL,                       -- null for ctb
+    pp_fl         REAL,                       -- null for taiko, ctb, mania
+    pp_speed      REAL,                       -- null for taiko, ctb, mania
+    pp_strain     REAL,                       -- null for std, ctb
+    strain_arm    REAL,                       -- null for taiko, ctb, mania
+    strain_speed  REAL,                       -- null for taiko, ctb, mania
+    ar            REAL    NOT NULL,
+    cs            REAL    NOT NULL,
+    hp            REAL    NOT NULL,
+    od            REAL    NOT NULL,
+    bpm           REAL    NOT NULL,
+
+    -- info from osu!api or from osu.db scan (https://github.com/kiwec/orl-maps-db-generator)
+    set_id        INTEGER NOT NULL,
+    length        REAL    NOT NULL,
+    ranked        INTEGER NOT NULL,          -- not a boolean but an enum
+    dmca          INTEGER NOT NULL,
+
+    -- ...and our own stuff
+    season2       INTEGER NOT NULL DEFAULT 0 -- is it part of the S2 map pool?
   );
 
-  CREATE TABLE IF NOT EXISTS discord_lobby_listing (
-    osu_lobby_id INTEGER PRIMARY KEY,
-    discord_channel_id TEXT NOT NULL,
-    discord_message_id TEXT NOT NULL
+
+  CREATE TABLE IF NOT EXISTS full_user (
+    user_id         INTEGER PRIMARY KEY,
+    username        TEXT    NOT NULL,
+    avatar_url      TEXT    NOT NULL,
+    auth_token      TEXT    NOT NULL,
+    country_code    TEXT,   -- nullable for transition from old database
+
+    -- glicko data
+    pp              REAL    NOT NULL DEFAULT 0.0,
+    pp_tms          INTEGER NOT NULL,
+    mu              REAL    NOT NULL DEFAULT 0.0,
+    sig             REAL    NOT NULL DEFAULT (350.0 / 173.7178),
+    rank_division   TEXT    NOT NULL DEFAULT 'Unranked',
+
+    -- discord data
+    discord_user_id TEXT,
+    discord_role    TEXT
   );
 
-  CREATE TABLE IF NOT EXISTS user (
-    user_id INTEGER PRIMARY KEY,
-    username TEXT,
-    elo REAL,
-    approx_mu REAL,
-    approx_sig REAL,
-    aim_pp REAL,
-    acc_pp REAL,
-    speed_pp REAL,
-    overall_pp REAL,
-    avg_ar REAL,
-    avg_sr REAL,
-    last_top_score_tms INTEGER,
-    last_update_tms INTEGER,
-    games_played INTEGER,
-    last_contest_tms INTEGER,
-    rank_text TEXT
+
+  CREATE TABLE IF NOT EXISTS map_pool (
+    season        INTEGER NOT NULL,
+    collection_id INTEGER NOT NULL,
+    user_id       INTEGER NOT NULL,
+    added_tms     INTEGER NOT NULL,
+    data          TEXT    NOT NULL,
+
+    FOREIGN KEY(user_id) REFERENCES full_user(user_id)
   );
 
-  CREATE TABLE IF NOT EXISTS map (
-    id INTEGER PRIMARY KEY,
-    set_id INTEGER NOT NULL,
-    mode INTEGER DEFAULT 0,
-    name TEXT NOT NULL,
 
-    length REAL NOT NULL,
-    ranked INT NOT NULL,
-    dmca INTEGER NOT NULL,
+  CREATE TABLE IF NOT EXISTS match (
+    match_id   INTEGER PRIMARY KEY,
+    invite_id  INTEGER NOT NULL,
+    creator_id INTEGER NOT NULL,
+    name       TEXT    NOT NULL,
+    start_time INTEGER NOT NULL,
+    end_time   INTEGER,
 
-    stars REAL NOT NULL,
-    aim_pp REAL,
-    speed_pp REAL,
-    acc_pp REAL,
-    overall_pp REAL,
-    ar REAL NOT NULL
+    data       TEXT,
+    discord_channel_id TEXT,
+    discord_message_id TEXT,
+
+    FOREIGN KEY(creator_id) REFERENCES full_user(user_id)
   );
 
-  CREATE TABLE IF NOT EXISTS contest (
-    lobby_id INTEGER NOT NULL,
-    map_id INTEGER NOT NULL,
-    tms INTEGER NOT NULL,
-    lobby_creator TEXT NOT NULL,
-    mods INTEGER DEFAULT 0
+
+  CREATE TABLE IF NOT EXISTS game (
+    game_id      INTEGER PRIMARY KEY,
+    match_id     INTEGER NOT NULL, -- "match" means lobby
+    start_time   INTEGER NOT NULL,
+    end_time     INTEGER NOT NULL,
+    beatmap_id   INTEGER NOT NULL,
+    play_mode    INTEGER NOT NULL,
+    match_type   INTEGER NOT NULL,
+    scoring_type INTEGER NOT NULL,
+    team_type    INTEGER NOT NULL,
+    mods         INTEGER NOT NULL,
+
+    FOREIGN KEY(match_id)   REFERENCES match(match_id),
+    FOREIGN KEY(beatmap_id) REFERENCES full_map(map_id)
   );
 
-  CREATE TABLE IF NOT EXISTS score (
-    user_id INTEGER NOT NULL,
-    contest_id INTEGER NOT NULL,
 
-    -- Used for elo calculations
-    score INTEGER,
-    tms INTEGER NOT NULL,
+  CREATE TABLE IF NOT EXISTS full_score (
+    game_id      INTEGER NOT NULL,
+    user_id      INTEGER NOT NULL,
+    slot         INTEGER NOT NULL,
+    team         INTEGER NOT NULL,
+    score        INTEGER NOT NULL,
+    maxcombo     INTEGER NOT NULL,
+    count50      INTEGER NOT NULL,
+    count100     INTEGER NOT NULL,
+    count300     INTEGER NOT NULL,
+    countmiss    INTEGER NOT NULL,
+    countgeki    INTEGER NOT NULL,
+    countkatu    INTEGER NOT NULL,
+    perfect      INTEGER NOT NULL,
+    pass         INTEGER NOT NULL,
+    enabled_mods INTEGER NOT NULL,
 
-    -- Used for website display
-    map_id INTEGER NOT NULL,
-    old_elo REAL,
-    new_elo REAL,
-    new_deviation REAL
+    end_time     INTEGER NOT NULL, -- used for sorting by tms on player profiles
+    beatmap_id   INTEGER NOT NULL, -- used for website display
+    dodged       INTEGER NOT NULL,
+
+    FOREIGN KEY(game_id)    REFERENCES game(game_id),
+    FOREIGN KEY(user_id)    REFERENCES full_user(user_id),
+    FOREIGN KEY(beatmap_id) REFERENCES full_map(map_id)
   );
-  CREATE INDEX IF NOT EXISTS contest_id_idx ON score (contest_id);
-  CREATE INDEX IF NOT EXISTS score_user_idx ON score (user_id);
+  CREATE INDEX IF NOT EXISTS full_game_id_idx    ON full_score(game_id);
+  CREATE INDEX IF NOT EXISTS full_score_user_idx ON full_score(user_id);
 
-  CREATE TABLE IF NOT EXISTS website_tokens (
-    user_id INTEGER,
-    token TEXT,
-    expires_tms INTEGER,
-    osu_access_token TEXT,
-    osu_refresh_token TEXT
-  )`);
+  -- TODO: discord auth tokens, website auth tokens
+`);
 
-export default {discord, ranks};
+export default db;

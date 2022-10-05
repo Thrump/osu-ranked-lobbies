@@ -1,7 +1,6 @@
 import fetch from 'node-fetch';
 
 import bancho from './bancho.js';
-import {remove_lobby_listing} from './discord_updates.js';
 import {get_map_info} from './profile_scanner.js';
 import {random_from} from './util/helpers.js';
 
@@ -92,12 +91,6 @@ async function init_lobby(lobby) {
 
   lobby.on('matchFinished', async () => {
     await lobby.select_next_map();
-  });
-
-  lobby.on('close', async () => {
-    // Lobby closed (intentionally or not), clean up
-    bancho.joined_lobbies.splice(bancho.joined_lobbies.indexOf(lobby), 1);
-    await remove_lobby_listing(lobby.id);
   });
 
   if (!lobby.data.collection) {

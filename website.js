@@ -8,8 +8,8 @@ import crypto from 'crypto';
 
 import bancho from './bancho.js';
 import databases from './database.js';
-import {get_rank, get_rank_text_from_id} from './elo_mmr.js';
-import {update_discord_role, update_discord_username} from './discord_updates.js';
+import {get_rank, get_rank_text_from_id} from './glicko.js';
+import {update_division, update_discord_username} from './discord_updates.js';
 import Config from './util/config.js';
 import {render_error} from './util/helpers.js';
 import {register_routes as register_api_routes} from './website_api.js';
@@ -265,7 +265,7 @@ async function listen() {
         user_profile.username,
         'Linked their account',
     );
-    await update_discord_role(
+    await update_division(
         user_profile.id,
         get_rank_text_from_id(user_profile.id),
     );

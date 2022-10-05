@@ -3,9 +3,8 @@ import Sentry from '@sentry/node';
 import bancho from './bancho.js';
 import commands from './commands.js';
 import databases from './database.js';
-import {apply_rank_decay} from './elo_mmr.js';
 import {init as init_discord_interactions} from './discord_interactions.js';
-import {remove_lobby_listing, init as init_discord_updates} from './discord_updates.js';
+import {init as init_discord_updates} from './discord_updates.js';
 import {listen as website_listen} from './website.js';
 import {init_lobby as init_ranked_lobby} from './ranked.js';
 import {init_lobby as init_collection_lobby} from './collection.js';
@@ -26,7 +25,8 @@ async function rejoin_lobbies() {
       }
     } catch (err) {
       console.error(`Failed to rejoin lobby #${lobby.id}: ${err}`);
-      await remove_lobby_listing(lobby.id);
+      lobby.data.failed_to_rejoin = err;
+      db.prepare(`UPDATE match SET end_time = ? WHERE match_id = ?`).run(Date.now(), lobby.id);
     }
   };
 
@@ -52,10 +52,6 @@ async function main() {
   if (Config.CREATE_LOBBIES) {
     // Check for lobby creation every minute
     setInterval(() => create_lobby_if_needed(), 60 * 1000);
-  }
-  if (Config.APPLY_RANK_DECAY) {
-    // This is pretty database intensive, so run it hourly
-    setInterval(apply_rank_decay, 3600 * 1000);
   }
 
   bancho.on('pm', (msg) => {
@@ -99,9 +95,6 @@ async function main() {
 
   if (Config.CREATE_LOBBIES) {
     create_lobby_if_needed();
-  }
-  if (Config.APPLY_RANK_DECAY) {
-    await apply_rank_decay();
   }
 
   console.log('All ready and fired up!');

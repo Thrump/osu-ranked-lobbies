@@ -1,0 +1,2 @@
+ALTER TABLE `score` RENAME TO `season1_score`;
+ALTER TABLE `map` ADD COLUMN season2 INTEGER DEFAULT 0;

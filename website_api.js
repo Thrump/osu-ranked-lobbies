@@ -12,7 +12,7 @@ dayjs.extend(relativeTime);
 import Config from './util/config.js';
 import bancho from './bancho.js';
 import databases from './database.js';
-import {get_rank} from './elo_mmr.js';
+import {get_rank} from './glicko.js';
 import {init_lobby as init_ranked_lobby} from './ranked.js';
 import {init_lobby as init_collection_lobby} from './collection.js';
 
@@ -274,23 +274,22 @@ async function register_routes(app) {
       lobby.data.creator = user.username;
       lobby.data.creator_osu_id = req.user_id;
 
-      if (req.body.title && req.body.type != 'ranked') {
-        await lobby.send(`!mp name ${req.body.title}`);
-        lobby.name = req.body.title;
-      }
-
-      if (req.body.star_rating == 'fixed') {
-        lobby.data.min_stars = req.body.min_stars;
-        lobby.data.max_stars = req.body.max_stars;
-        lobby.data.fixed_star_range = true;
-      } else {
-        lobby.data.fixed_star_range = false;
-      }
-
       if (req.body.type == 'ranked') {
-        lobby.data.is_scorev2 = req.body.scoring_system == 'scorev2';
         await init_ranked_lobby(lobby);
       } else {
+        if (req.body.title) {
+          await lobby.send(`!mp name ${req.body.title}`);
+          lobby.name = req.body.title;
+        }
+
+        if (req.body.star_rating == 'fixed') {
+          lobby.data.min_stars = req.body.min_stars;
+          lobby.data.max_stars = req.body.max_stars;
+          lobby.data.fixed_star_range = true;
+        } else {
+          lobby.data.fixed_star_range = false;
+        }
+
         lobby.data.collection_id = req.body.collection_id;
         await init_collection_lobby(lobby);
       }

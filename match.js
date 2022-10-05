@@ -2,7 +2,7 @@ import EventEmitter from 'events';
 
 import bancho from './bancho.js';
 import commands from './commands.js';
-import databases from './database.js';
+import db from './database.js';
 
 import Config from './util/config.js';
 import {capture_sentry_exception} from './util/helpers.js';
@@ -82,8 +82,10 @@ class BanchoLobby extends EventEmitter {
 
     if (line == `:${Config.osu_username}!cho@ppy.sh PART :${this.channel}`) {
       this.joined = false;
-      this.emit('close');
+      db.prepare(`UPDATE match SET end_time = ? WHERE match_id = ?`).run(Date.now(), this.id);
       bancho._lobbies.splice(bancho._lobbies.indexOf(this), 1);
+      bancho.joined_lobbies.splice(bancho.joined_lobbies.indexOf(lobby), 1);
+      this.emit('close');
       return;
     }
 
