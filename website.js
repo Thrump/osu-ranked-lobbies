@@ -122,7 +122,7 @@ async function listen() {
       }
 
       http_res.cookie('token', new_auth_token, {sameSite: true});
-      http_res.redirect(`/u/${Config.osu_id}`);
+      http_res.redirect('/success');
       return;
     }
 
@@ -273,7 +273,17 @@ async function listen() {
 
   app.get('/success', async (req, http_res) => {
     const data = {title: 'Account Linked - o!RL'};
-    http_res.send(await render_error(req, 'Account linked!', 200, data));
+
+    // If the user has just logged in. Redirect them to the page they were on before.
+    if (req.cookies.redirect != null) {
+      let redirect = req.cookies.redirect;
+      http_res.cookie('redirect', redirect, {maxAge: Date.now(0)});
+      http_res.redirect("/" + redirect + "/");
+      http_res.end()
+    }
+    else
+      http_res.send(await render_error(req, 'Account linked!', 200, data));
+      http_res.end()
   });
 
   app.get('/search', async (req, http_res) => {
