@@ -1,9 +1,65 @@
 import bancho from './bancho.js';
 import databases from './database.js';
 import {update_mmr} from './glicko.js';
-
-import {scan_user_profile} from './profile_scanner.js';
 import Config from './util/config.js';
+
+
+async function get_full_players(match, game) {
+  const full_players = [];
+  const missing_player_ids = [];
+
+  for (const score of game.scores) {
+    const full_player = db.prepare(`SELECT * FROM full_user WHERE user_id = ?`).run(score.user_id);
+    if (full_player) {
+      // TODO check if username changed and call update_discord_username() if it did
+      full_players.push(full_player);
+    } else {
+      missing_player_ids.push(score.user_id);
+    }
+  }
+  if (missing_player_ids.length == 0) {
+    return full_players;
+  }
+
+  // New players, pog! Get their info.
+  let new_users = null;
+  try {
+    let args = `ids[0]=${missing_player_ids[0]}`;
+    for (let i = 1; i < missing_player_ids.length; i++) {
+      args += `&ids[${i}]=${missing_player_ids[i]}`;
+    }
+
+    new_users = await osu_fetch(`https://osu.ppy.sh/api/v2/users?${args}`);
+  } catch (err) {
+    console.error('Failed to fetch profiles for IDs: ' + missing_player_ids.toString());
+    capture_sentry_exception(err);
+    return full_players;
+  }
+
+  // Approximates elo from total_pp to suggest appropriate maps
+  const total_pp_to_mu = (total_pp) => {
+    let elo = total_pp * 0.15;
+
+    // Make sure we don't under- or over- rank someone based on their profile
+    if (elo < 500) elo = 500;
+    if (elo > 2500) elo = 2500;
+
+    return (elo - 1500) / 173.7178;
+  };
+  for (const user of new_users) {
+    // TODO: migrate older profile (discord_user_id, discord_role)
+
+    db.prepare(`
+      INSERT INTO full_user (user_id, username, country_code, profile_data, osu_mu, catch_mu, mania_mu, taiko_mu)
+      VALUES                (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(user.id, user.username, user.country_code, user,
+        total_pp_to_mu(user.statistics_rulesets.osu.pp),
+        total_pp_to_mu(user.statistics_rulesets.fruits.pp),
+        total_pp_to_mu(user.statistics_rulesets.mania.pp),
+        total_pp_to_mu(user.statistics_rulesets.taiko.pp),
+    );
+  }
+}
 
 
 async function set_new_title(lobby) {
@@ -73,14 +129,6 @@ async function select_next_map() {
 
 
 async function init_lobby(lobby) {
-  // When API is down or instable, match scores can't get processed in real
-  // time. Workaround: process those later, when the API is working again.
-  // As long as less than 32 matches happen before the API goes back up,
-  // scores shouldn't get memory holed.
-  // TODO: verify API indeed stops at 32 matches, and the 32 last, not 32 first
-  //       (will need to check some other bot lobby in multi menu)
-  lobby.data.api_backlog = 0;
-
   lobby.match_participants = [];
   lobby.recent_maps = [];
   lobby.votekicks = [];
@@ -98,11 +146,6 @@ async function init_lobby(lobby) {
 
   lobby.on('settings', async () => {
     for (const player of lobby.players) {
-      // Have not scanned the player's profile in the last 24 hours
-      if (player.last_update_tms + (3600 * 24 * 1000) <= Date.now()) {
-        await scan_user_profile(player);
-      }
-
       if (lobby.playing && player.state != 'No Map') {
         lobby.match_participants[player.username] = player;
       }
@@ -180,31 +223,29 @@ async function init_lobby(lobby) {
     clearTimeout(lobby.match_end_timeout);
     lobby.match_end_timeout = -1;
 
-
+    let match = null;
+    let game = null;
     try {
-      res = await fetch(`https://osu.ppy.sh/api/get_match?k=${Config.osu_v1api_key}&m=${lobby.id}`);
-    } catch (err) {
-      throw new Error(`Failed to fetch match info for lobby ${lobby.id}.`);
-      lobby.data.api_backlog = lobby.data.api_backlog + 1;
-    }
-
-
-    const rank_updates = update_mmr(lobby);
-    await lobby.select_next_map();
-
-    if (rank_updates.length > 0) {
-      // Max 8 rank updates per message - or else it starts getting truncated
-      const MAX_UPDATES_PER_MSG = 6;
-      for (let i = 0, j = rank_updates.length; i < j; i += MAX_UPDATES_PER_MSG) {
-        const updates = rank_updates.slice(i, i + MAX_UPDATES_PER_MSG);
-
-        if (i == 0) {
-          await lobby.send('Rank updates: ' + updates.join(' | '));
-        } else {
-          await lobby.send(updates.join(' | '));
+      match = await osu_fetch(`https://osu.ppy.sh/api/v2/matches/${lobby.id}`);
+      for (const event of match.events) {
+        if (event.game) {
+          game = event.game;
         }
       }
+
+      if (game == null) {
+        console.error(`No game found in match results, latest_event_id = ${match.latest_event_id}`);
+        throw new Error(`No game found in match results`);
+      }
+    } catch (err) {
+      capture_sentry_exception(err);
     }
+
+    await lobby.select_next_map();
+    if (!match || !game) return;
+
+    const players = await get_full_players(match, game);
+    await save_game_and_update_rating(lobby, game, players);
   });
 
   lobby.on('allPlayersReady', async () => {

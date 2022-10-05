@@ -2,46 +2,10 @@
 // - https://en.wikipedia.org/wiki/Glicko_rating_system
 // - http://www.glicko.net/glicko/glicko2.pdf
 
-import databases from './database.js';
+import db from './database.js';
 import {update_division} from './discord_updates.js';
 import Config from './util/config.js';
 import {capture_sentry_exception} from './util/helpers.js';
-
-
-const stmts = {
-  create_contest: databases.ranks.prepare(`
-    INSERT INTO contest (lobby_id, map_id, mods, tms, lobby_creator)
-    VALUES (?, ?, ?, ?, ?)`,
-  ),
-  insert_score: databases.ranks.prepare(`
-    INSERT INTO score (
-      user_id, contest_id, score, tms,
-      map_id, old_elo, new_elo, new_deviation
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ),
-  update_user: databases.ranks.prepare(`
-    UPDATE user
-    SET
-      elo = ?,
-      approx_mu = ?,
-      approx_sig = ?,
-      games_played = ?,
-      last_contest_tms = ?
-    WHERE user_id = ?`,
-  ),
-  elo_from_id: databases.ranks.prepare(`
-    SELECT elo, games_played FROM user
-    WHERE user_id = ?`,
-  ),
-  ranked_user_count: databases.ranks.prepare(`
-    SELECT COUNT(*) AS nb FROM user
-    WHERE games_played > 4 AND last_contest_tms > ?`,
-  ),
-  better_users_count: databases.ranks.prepare(`
-    SELECT COUNT(*) AS nb FROM user
-    WHERE elo > ? AND games_played > 4 AND last_contest_tms > ?`,
-  ),
-};
 
 
 const RANK_DIVISIONS = [
@@ -68,139 +32,173 @@ const RANK_DIVISIONS = [
 ];
 
 
-function get_new_deviation(player, contest_tms) {
-  if (player.last_contest_tms == 0 || isNaN(player.last_contest_tms)) return 350.0;
+// Recompute the rating of a map or a player
+// OGS-style: we keep a base rating and a current rating for better accuracy.
+// https://forums.online-go.com/t/ogs-has-a-new-glicko-2-based-rating-system/13058
+//
+// NOTE: entity/opponents have additional temporary "won" and "score_id" fields
+async function update_rating(entity, opponent_ratings) {
+  if (opponent_ratings.length == 0) return;
+  const is_map = typeof entity.won === 'undefined';
 
-  // While the Glicko-2 paper says it works best if there are 10-15 games
-  // per player in a rating period, we choose to make a rating period per
-  // second. But since we don't use Glicko-2's volatility system (it can be
-  // gamed for gaining ranks, and we use "importance" instead), this
-  // doesn't matter.
-  const SECONDS_PER_MONTH = 2592000;
-  const C = Math.sqrt((350 * 350 - 50 * 50) / SECONDS_PER_MONTH);
+  let i = 0;
+  let outcomes = 0.0;
+  let variance = 0.0;
+  for (const opponent of opponent_ratings) {
+    let score = 0.5;
+    if (is_map) {
+      // maps get their score from their opponents
+      score = opponent.won ? 0.0 : 1.0;
+    } else {
+      // players get their score from themselves
+      score = entity.won ? 1.0 : 0.0;
+    }
 
-  const time_since_last_play = (contest_tms - player.last_contest_tms) / 1000;
+    const fval = 1.0 / Math.sqrt(1.0 + 3.0 * opponent.current_sig * opponent.current_sig / (Math.PI * Math.PI));
+    const gval = 1.0 / (1.0 + Math.exp(-fval * (entity.current_mu - opponent.current_mu)));
+    variance += fval * fval * gval * (1.0 - gval);
+    outcomes += fval * (score - gval);
+    i++;
 
-  // Modifier to make rank decay weaker initially
-  const modifier = Math.pow(Math.min(time_since_last_play / SECONDS_PER_MONTH, 1.0), 4.0);
+    if (i == 15) {
+      // Completed a rating period; save and replace previous base rating
+      entity.base_sig = 1.0 / Math.sqrt((1.0 / (entity.base_sig * entity.base_sig)) + (1.0 / Math.pow(variance, -1.0)));
+      entity.base_mu = entity.base_mu + entity.base_sig * entity.base_sig * outcomes;
+      entity.base_sig = Max.max(30 / 173.7178, Math.min(350 / 173.7178, entity.base_sig));
 
-  return Math.min(
-      350.0,
-      Math.sqrt((player.approx_sig * player.approx_sig) + ((C * C) * time_since_last_play * modifier)),
+      if (is_map) {
+        entity.base_score_id = opponent.score_id;
+      } else {
+        entity.base_score_id = entity.score_id; // TODO make sure this is set!
+      }
+
+      entity.current_sig = entity.base_sig;
+      entity.current_mu = entity.base_mu;
+
+      db.prepare(`UPDATE rating
+        SET base_sig = ?, base_mu = ?, base_score_id = ?, current_sig = ?, current_mu = ?
+        WHERE rating_id = ?`).run(
+          entity.base_sig, entity.base_mu, entity.base_score_id, entity.current_sig, entity.current_mu,
+          entity.rating_id,
+      );
+
+      // Reset so we keep processing the rest with a new base & current rating
+      outcomes = 0.0;
+      variance = 0.0;
+      i = 0;
+    }
+  }
+
+  if (outcomes == 0.0 && variance == 0.0) {
+    // Numbers wouldn't change anyway, but this avoids an UPDATE call
+    return;
+  }
+
+  // Didn't complete a rating period; still update current rating
+  entity.current_sig = 1.0 / Math.sqrt((1.0 / (entity.base_sig * entity.base_sig)) + (1.0 / Math.pow(variance, -1.0)));
+  entity.current_mu = entity.base_mu + entity.current_sig * entity.current_sig * outcomes;
+  entity.current_sig = Max.max(30 / 173.7178, Math.min(350 / 173.7178, entity.current_sig));
+  db.prepare(`UPDATE rating SET current_sig = ?, current_mu = ? WHERE rating_id = ?`).run(
+      entity.rating_id, entity.current_sig, entity.current_mu,
   );
 }
 
 
-// This is used to let the bot work while we're running some synchronous task,
-// like recomputing a lot of ranks. Without this, the bot would get timed out
-// for not replying to pings.
-function event_loop_hack() {
-  return new Promise((resolve, reject) => {
-    setImmediate(resolve);
-  });
-}
+async function save_game_and_update_rating(lobby, game, players) {
+  if (!game || game.scores.length < 2) return [];
 
+  // TODO: handle dodgers - check if API includes them (doubt it does)
 
-function update_mmr(lobby, contest_tms) {
-  // Usually, we're in a live lobby, but sometimes we want to recompute all
-  // scores (like after updating the ranking algorithm), so this boolean is
-  // used to avoid extra database calls.
-  let is_live_lobby = false;
-  if (typeof contest_tms === 'undefined') {
-    contest_tms = Date.now();
-    is_live_lobby = true;
+  const tms = Date.parse(game.end_time);
+  let rating_column;
+  let division_column;
+  if (game.mode == 'osu') {
+    rating_column = 'osu_rating';
+    division_column = 'osu_division';
+  } else if (game.mode == 'fruits') {
+    rating_column = 'catch_rating';
+    division_column = 'catch_division';
+  } else if (game.mode == 'mania') {
+    rating_column = 'mania_rating';
+    division_column = 'mania_division';
+  } else if (game.mode == 'taiko') {
+    rating_column = 'taiko_rating';
+    division_column = 'taiko_division';
+  } else {
+    throw new Error(`Unknown game mode '${game.mode}'`);
   }
 
-  const players = [];
-  const usernames = [];
-  for (const score of lobby.scores) {
-    const player = lobby.match_participants[score.username];
-    if (!player) continue;
-
-    // Ignore duplicate scores (only 1 allowed per username)
-    if (usernames.includes(score.username)) continue;
-    usernames.push(score.username);
-
-    player.old_approx_mu = player.approx_mu;
-    player.score = score.score;
-
-    if (is_live_lobby) {
-      player.rank_float = get_rank(player.elo).ratio;
-    }
-
-    players.push(player);
-  }
-
-  if (players.length < 2) {
-    // Don't store the contest results when there is only one player in the
-    // match. This avoids bloating the user's profile with 1/1 scores and
-    // affecting their rank/volatility.
-    return [];
-  }
-
-  const res = stmts.create_contest.run(
-      lobby.id, lobby.beatmap_id, 0, contest_tms, lobby.data.creator,
+  db.prepare(`INSERT INTO game (
+    game_id, match_id, start_time, end_time, beatmap_id,
+    play_mode, scoring_type, team_type, mods
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      game.id, lobby.id, Date.parse(game.start_time), tms, game.beatmap.id,
+      game.mode_int, game.scoring_type, game.team_type, game.mods.toString(),
   );
-  const contest_id = res.lastInsertRowid;
 
-  // Step 2.
-  for (const player of players) {
-    player.approx_mu = (player.approx_mu - 1500.0) / 173.7178;
-    player.approx_sig = get_new_deviation(player, contest_tms) / 173.7178;
+  for (const score of game.scores) {
+    db.prepare(`INSERT INTO full_score (
+      game_id, user_id, slot, team, score, max_combo,
+      count_50, count_100, count_300, count_miss, count_geki, count_katu,
+      perfect, pass, enabled_mods, created_at, beatmap_id, dodged
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        game.id, score.user_id, score.match.slot, score.match.team, score.score, score.max_combo,
+        score.statistics.count_50, score.statistics.count_100, score.statistics.count_300,
+        score.statistics.count_miss, score.statistics.count_geki, score.statistics.count_katu,
+        score.perfect, score.pass, score.mods.toString(), Date.parse(score.created_at),
+        game.beatmap.id, 0,
+    );
   }
 
-  for (const player of players) {
-    // Steps 3. and 4.
-    let outcomes = 0.0;
-    let variance = 0.0;
-    for (const opponent of players) {
-      if (player == opponent) continue;
+  // I am aware that the following is very database intensive.
+  // But I don't give a shit. I'll worry about it later :)
 
-      let score = 0.5;
-      if (player.score > opponent.score) score = 1.0;
-      if (player.score < opponent.score) score = 0.0;
+  // Update map rating
+  const map_rating = db.prepare(`
+    SELECT * FROM rating
+    INNER JOIN full_map ON full_map.rating_id = rating.rowid
+    WHERE full_map.map_id = ?`,
+  ).get(game.beatmap.id);
+  const scores = db.prepare(`
+    SELECT
+      full_score.rowid AS score_id,
+      ((NOT full_score.dodged) AND full_score.pass AND (full_score.accuracy > 0.95)) AS won,
+      *
+    FROM rating
+    INNER JOIN full_user  ON full_user.${rating_column} = rating.rowid
+    INNER JOIN full_score ON full_user.user_id = full_score.user_id
+    WHERE full_score.beatmap_id = ? AND full_score.rowid > ?
+    ORDER BY full_score.rowid ASC`,
+  ).get(game.beatmap.id, map_rating.base_score_id);
+  await update_rating(map_rating, scores);
 
-      const fval = 1.0 / Math.sqrt(1.0 + 3.0 * opponent.approx_sig * opponent.approx_sig / (Math.PI * Math.PI));
-      const gval = 1.0 / (1.0 + Math.exp(-fval * (player.approx_mu - opponent.approx_mu)));
-      variance += fval * fval * gval * (1.0 - gval);
-      outcomes += fval * (score - gval);
-    }
-
-    // Step 6. and 7.
-    player.new_approx_sig = 1.0 / Math.sqrt((1.0 / (player.approx_sig * player.approx_sig)) + (1.0 / Math.pow(variance, -1.0)));
-    player.change = player.new_approx_sig * player.new_approx_sig * outcomes;
-
-    const MAX_ELO_CHANGE = 200.0 / 173.7178;
-    player.change = Math.max(-MAX_ELO_CHANGE, Math.min(MAX_ELO_CHANGE, player.change));
-    player.new_approx_mu = player.approx_mu + player.change;
+  // Update player ratings
+  for (const score of game.scores) {
+    const user_rating = db.prepare(`
+      SELECT * FROM rating
+      INNER JOIN full_user ON full_user.${rating_column} = rating.rowid
+      WHERE full_user.user_id = ?`,
+    ).get(score.user_id);
+    const maps = db.prepare(`
+      SELECT
+        full_score.rowid AS score_id,
+        ((NOT full_score.dodged) AND full_score.pass AND (full_score.accuracy > 0.95)) AS won,
+        *
+      FROM rating
+      INNER JOIN full_user  ON full_user.${rating_column} = rating.rowid
+      INNER JOIN full_score ON full_user.user_id = full_score.user_id
+      WHERE full_score.user_id = ? AND full_score.rowid > ?`,
+    ).get(score.user_id, user_rating.base_score_id);
+    await update_rating(user_rating, maps);
   }
 
-  // Step 8.
-  for (const player of players) {
-    player.approx_mu = player.new_approx_mu * 173.7178 + 1500.0;
-    player.approx_sig = Math.min(350.0, player.new_approx_sig * 173.7178);
-    player.last_contest_tms = contest_tms;
-    player.elo = player.approx_mu - (3 * player.approx_sig);
-    player.games_played++;
-
-    // If the bot restarted at the wrong timing, it can miss some user IDs.
-    // We can't save the scores without it.
-    if (player.user_id) {
-      stmts.insert_score.run(
-          player.user_id, contest_id, player.score, player.last_contest_tms,
-          lobby.beatmap_id, player.old_approx_mu, player.approx_mu, player.approx_sig,
-      );
-      stmts.update_user.run(
-          player.elo, player.approx_mu, player.approx_sig,
-          player.games_played, player.last_contest_tms, player.user_id,
-      );
-    }
+  // Usually, we're in a live lobby, but sometimes we're just recomputing
+  // scores (like after updating the ranking algorithm), so we return early.
+  if (!bancho.connected) {
+    return;
   }
 
-  // Return the users whose rank's display text changed
   const rank_changes = [];
-  if (!is_live_lobby) return rank_changes;
-
   const division_to_index = (text) => {
     if (text == 'Unranked') {
       return -1;
@@ -211,10 +209,6 @@ function update_mmr(lobby, contest_tms) {
     }
   };
 
-  const update_rank_text_stmt = databases.ranks.prepare(`
-    UPDATE user SET rank_text = ?
-    WHERE user_id = ?`,
-  );
   for (const player of players) {
     if (player.games_played < 5) continue;
 
@@ -231,12 +225,31 @@ function update_mmr(lobby, contest_tms) {
 
       player.rank_float = new_rank.ratio;
       player.rank_text = new_rank.text;
-      update_rank_text_stmt.run(new_rank.text, player.user_id);
+      db.prepare(`
+        UPDATE full_user
+        SET ${division_column} = ?
+        WHERE user_id = ?`,
+      ).run(
+          new_rank.text,
+          player.user_id,
+      );
       update_division(player.user_id, new_rank.text); // async but don't care about result
     }
   }
 
-  return rank_changes;
+  if (rank_changes.length > 0) {
+    // Max 8 rank updates per message - or else it starts getting truncated
+    const MAX_UPDATES_PER_MSG = 6;
+    for (let i = 0, j = rank_changes.length; i < j; i += MAX_UPDATES_PER_MSG) {
+      const updates = rank_changes.slice(i, i + MAX_UPDATES_PER_MSG);
+
+      if (i == 0) {
+        await lobby.send('Rank updates: ' + updates.join(' | '));
+      } else {
+        await lobby.send(updates.join(' | '));
+      }
+    }
+  }
 }
 
 
@@ -280,6 +293,54 @@ function get_rank(elo) {
   };
 }
 
+function get_user_ranks(user_id) {
+  const elos = db.prepare(`SELECT (
+      (a.current_mu - 3 * a.current_sig) AS osu_elo,
+      (b.current_mu - 3 * b.current_sig) AS catch_elo,
+      (c.current_mu - 3 * c.current_sig) AS mania_elo,
+      (d.current_mu - 3 * d.current_sig) AS taiko_elo,
+    ) FROM full_user
+    INNER JOIN rating a ON a.rowid = full_user.osu_rating
+    INNER JOIN rating b ON b.rowid = full_user.catch_rating
+    INNER JOIN rating c ON c.rowid = full_user.mania_rating
+    INNER JOIN rating d ON d.rowid = full_user.taiko_rating
+    WHERE full_user.user_id = ?`
+  ).get(user_id);
+  const better_users = db.prepare(`SELECT (
+    SELECT COUNT(*) AS nb_osu   FROM rating WHERE mode = 0 AND (current_mu - 3 * current_sig) > ?,
+    SELECT COUNT(*) AS nb_catch FROM rating WHERE mode = 1 AND (current_mu - 3 * current_sig) > ?,
+    SELECT COUNT(*) AS nb_mania FROM rating WHERE mode = 2 AND (current_mu - 3 * current_sig) > ?,
+    SELECT COUNT(*) AS nb_taiko FROM rating WHERE mode = 3 AND (current_mu - 3 * current_sig) > ?,
+  )`).get(elos.osu_elo, elos.catch_elo, elos.mania_elo, elos.taiko_elo);
+
+
+  db.prepare(`
+    SELECT COUNT(*) AS nb FROM rating
+    WHERE (current_mu - 3 * current_sig)
+    `);
+
+
+  const stmts = {
+    elo_from_id: databases.ranks.prepare(`
+    SELECT elo, games_played FROM user
+    WHERE user_id = ?`,
+    ),
+    ranked_user_count: databases.ranks.prepare(`
+    SELECT COUNT(*) AS nb FROM user
+    WHERE games_played > 4 AND last_contest_tms > ?`,
+    ),
+    better_users_count: databases.ranks.prepare(`
+    SELECT COUNT(*) AS nb FROM user
+    WHERE elo > ? AND games_played > 4 AND last_contest_tms > ?`,
+    ),
+  };
+
+
+  const all_users = stmts.ranked_user_count.get();
+  const better_users = stmts.better_users_count.get(user_id);
+  const ratio = 1.0 - (better_users.nb / all_users.nb);
+}
+
 function get_rank_text_from_id(osu_user_id) {
   const res = stmts.elo_from_id.get(osu_user_id);
   if (!res || !res.elo || res.games_played < 5) {
@@ -289,4 +350,4 @@ function get_rank_text_from_id(osu_user_id) {
   return get_rank(res.elo).text;
 }
 
-export {update_mmr, get_rank, get_rank_text_from_id};
+export {save_game_and_update_rating, get_rank, get_rank_text_from_id};

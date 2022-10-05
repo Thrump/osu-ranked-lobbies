@@ -1,7 +1,7 @@
 import fetch from 'node-fetch';
 
 import bancho from './bancho.js';
-import {get_map_info} from './profile_scanner.js';
+import {get_map_info} from './map_scanner.js';
 import {random_from} from './util/helpers.js';
 
 

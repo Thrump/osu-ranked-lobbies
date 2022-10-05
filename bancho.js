@@ -24,6 +24,7 @@ class BanchoClient extends EventEmitter {
   constructor() {
     super();
 
+    this.connected = false;
     this._whois_requests = [];
     this._outgoing_messages = [];
     this._buffer = '';
@@ -64,6 +65,7 @@ class BanchoClient extends EventEmitter {
       this._buffer = '';
       clearInterval(this._writer);
       this._writer = null;
+      this.connected = false;
       this.emit('disconnect');
     });
 
@@ -109,6 +111,7 @@ class BanchoClient extends EventEmitter {
 
           if (parts[1] == '001') {
             console.info('[IRC] Successfully logged in.');
+            this.connected = true;
             resolve();
             continue;
           }

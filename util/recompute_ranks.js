@@ -94,7 +94,7 @@ bar = new ProgressBar('recomputing scores [:bar] :rate/s | :etas remaining', {
 });
 for (const contest of contests) {
   // Recompute MMR using fake lobby object
-  update_mmr(contest.lobby, contest.tms);
+  update_mmr(contest.lobby, contest.tms); // TODO: second argument is a game, not a tms
 
   bar.tick(1);
 }

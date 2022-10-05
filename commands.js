@@ -1,7 +1,7 @@
+import {osu_fetch} from './api.js';
 import bancho from './bancho.js';
 import databases from './database.js';
 import {get_rank} from './glicko.js';
-import {get_map_data} from './profile_scanner.js';
 import {load_collection, init_lobby as init_collection_lobby} from './collection.js';
 import {init_lobby as init_ranked_lobby} from './ranked.js';
 import Config from './util/config.js';
@@ -245,7 +245,10 @@ async function skip_command(msg, match, lobby) {
   // When bot just joined the lobby, beatmap_id is null.
   if (lobby.beatmap_id && !lobby.map_data) {
     try {
-      lobby.map_data = await get_map_data(lobby.beatmap_id);
+      console.info(`[API] Fetching map data for map ID ${lobby.beatmap_id}`);
+      const res = await osu_fetch(`https://osu.ppy.sh/api/v2/beatmaps/lookup?id=${lobby.beatmap_id}`);
+      lobby.map_data = await res.json();
+
       if (lobby.map_data.beatmapset.availability.download_disabled) {
         clearTimeout(lobby.countdown);
         lobby.countdown = -1;
