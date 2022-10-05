@@ -157,7 +157,7 @@ async function render_lobbies() {
   document.querySelector('main .go-to-create-lobby').addEventListener('click', (evt) => {
     evt.preventDefault();
     if (user_id == null) {
-      document.cookie = "redirect=create-lobby";
+      document.cookie = 'redirect=create-lobby';
       document.location = '/osu_login';
     } else {
       console.log('Loading ' + '/create-lobby/');
