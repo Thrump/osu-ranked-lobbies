@@ -2,7 +2,7 @@ import Sentry from '@sentry/node';
 
 import bancho from './bancho.js';
 import commands from './commands.js';
-import databases from './database.js';
+import db from './database.js';
 import {init as init_discord_interactions} from './discord_interactions.js';
 import {init as init_discord_updates} from './discord_updates.js';
 import {listen as website_listen} from './website.js';
@@ -13,25 +13,23 @@ import {capture_sentry_exception} from './util/helpers.js';
 
 
 async function rejoin_lobbies() {
-  const rejoin_lobby = async (lobby) => {
-    console.info(`Rejoining lobby #${lobby.id} (${lobby.data.mode})`);
+  const rejoin_lobby = async (match) => {
+    console.info(`Rejoining lobby #${match.match_id}`);
 
     try {
-      const bancho_lobby = await bancho.join('#mp_' + lobby.id);
+      const bancho_lobby = await bancho.join('#mp_' + match.match_id);
       if (bancho_lobby.data.mode == 'ranked') {
         await init_ranked_lobby(bancho_lobby);
       } else if (bancho_lobby.data.mode == 'collection') {
         await init_collection_lobby(bancho_lobby);
       }
     } catch (err) {
-      console.error(`Failed to rejoin lobby #${lobby.id}: ${err}`);
-      lobby.data.failed_to_rejoin = err;
-      db.prepare(`UPDATE match SET end_time = ? WHERE match_id = ?`).run(Date.now(), lobby.id);
+      console.error(`Failed to rejoin lobby #${match.match_id}: ${err}`);
+      db.prepare(`UPDATE match SET end_time = ? WHERE match_id = ?`).run(Date.now(), match.match_id);
     }
   };
 
-  const lobbies_stmt = databases.ranks.prepare('SELECT * FROM lobby');
-  const lobbies = lobbies_stmt.all();
+  const lobbies = db.prepare(`SELECT * FROM match WHERE end_time IS NULL`).all();
   const promises = [];
   for (const lobby of lobbies) {
     promises.push(rejoin_lobby(lobby));
@@ -73,15 +71,12 @@ async function main() {
   if (Config.CONNECT_TO_DISCORD) {
     try {
       discord_client = await init_discord_interactions();
+      await init_discord_updates(discord_client);
     } catch (err) {
       console.error('Failed to login to Discord:', err.message);
       process.exit();
     }
   }
-
-  // We still want to call this even without connecting to discord, since this
-  // initalizes discord.db which is used for tracking ranked lobbies.
-  await init_discord_updates(discord_client);
 
   if (Config.HOST_WEBSITE) {
     website_listen();
@@ -108,12 +103,13 @@ async function main() {
 // searching.
 async function create_lobby_if_needed() {
   const lobbies_to_create = [
-    {min: 5, max: 5.5, slug: '5a*'},
-    {min: 5.5, max: 6, slug: '5b*'},
-    {min: 6, max: 7, slug: '6*'},
+    {ruleset: 0, slug: 'std'},
+    {ruleset: 1, slug: 'catch'},
+    {ruleset: 2, slug: 'mania'},
+    {ruleset: 3, slug: 'taiko'},
   ];
   for (const to_create of lobbies_to_create) {
-    const already_created = bancho.joined_lobbies.some((lobby) => lobby.data.slug == to_create.slug);
+    const already_created = bancho._lobbies.some((lobby) => lobby.data.slug == to_create.slug);
     if (already_created) continue;
 
     try {
@@ -122,10 +118,8 @@ async function create_lobby_if_needed() {
       lobby.created_just_now = true;
       lobby.data.creator = Config.osu_username;
       lobby.data.creator_osu_id = Config.osu_id;
-      lobby.data.min_stars = to_create.min;
-      lobby.data.max_stars = to_create.max;
+      lobby.data.ruleset = to_create.ruleset;
       lobby.data.slug = to_create.slug;
-      lobby.data.fixed_star_range = true;
       await init_ranked_lobby(lobby);
     } catch (err) {
       // Don't care about errors here.

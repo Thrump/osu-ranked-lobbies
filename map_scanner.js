@@ -39,8 +39,7 @@ async function get_map_info(map_id) {
   // 3. Get additionnal map info from osu!api
   // (we can't get the following just from the .osu file: set_id, length, ranked, dmca)
   console.info(`[API] Fetching map data for map ID ${map_id}`);
-  const res = await osu_fetch(`https://osu.ppy.sh/api/v2/beatmaps/lookup?id=${map_id}`);
-  const api_res = await res.json();
+  const api_res = await osu_fetch(`https://osu.ppy.sh/api/v2/beatmaps/lookup?id=${map_id}`);
 
   // 4. Cause eyeStrain to the reader
   db.prepare(`

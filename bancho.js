@@ -90,7 +90,7 @@ class BanchoClient extends EventEmitter {
     });
 
     return new Promise(async (resolve, reject) => {
-      const {BanchoLobby} = await import('./match.js');
+      const {BanchoLobby} = await import('./lobby.js');
 
       this._socket.on('data', (data) => {
         data = data.toString().replace(/\r/g, '');
@@ -314,8 +314,11 @@ class BanchoClient extends EventEmitter {
   //
   // Avoid using this whenever possible, since a IRC username can sometimes
   // resolve to multiple players, and idk what happens in that case.
+  //
+  // Intentionally fails after 5 seconds just in case.
   whois(irc_username) {
     return new Promise((resolve, reject) => {
+      setTimeout(() => reject(new Error('Timeout out on whois request')), 5000);
       if (irc_username in this._whoare) {
         return resolve(this._whoare[irc_username]);
       }

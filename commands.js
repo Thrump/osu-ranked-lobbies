@@ -1,7 +1,7 @@
 import {osu_fetch} from './api.js';
 import bancho from './bancho.js';
-import databases from './database.js';
-import {get_rank} from './glicko.js';
+import db from './database.js';
+import {get_user_ranks} from './glicko.js';
 import {load_collection, init_lobby as init_collection_lobby} from './collection.js';
 import {init_lobby as init_ranked_lobby} from './ranked.js';
 import Config from './util/config.js';
@@ -52,50 +52,23 @@ async function ranked_command(msg, match, lobby) {
 
 async function rank_command(msg, match, lobby) {
   const requested_username = match[1].trim() || msg.from;
-
-  let user;
-  let user_id;
-  const user_from_id_stmt = databases.ranks.prepare(`
-    SELECT games_played, elo, user_id FROM user
-    WHERE user_id = ?`,
-  );
-  if (requested_username === msg.from) {
-    user_id = await bancho.whois(requested_username);
-    user = user_from_id_stmt.get(user_id);
-  } else {
-    const user_from_username_stmt = databases.ranks.prepare(`
-      SELECT games_played, elo, user_id FROM user
-      WHERE username = ?`,
-    );
-    user = user_from_username_stmt.get(requested_username);
-    if (!user) {
-      try {
-        user_id = await bancho.whois(requested_username);
-        user = user_from_id_stmt.get(user_id);
-      } catch (err) {
-        await reply(msg.from, lobby, `Player ${requested_username} not found. Are they online?`);
-        return;
-      }
+  let user_id = db.prepare(`SELECT user_id FROM full_user WHERE username = ?`).get(requested_username);
+  if (!user_id) {
+    try {
+      user_id = await bancho.whois(requested_username);
+    } catch (err) {
+      user_id = null;
     }
   }
 
-  let rank_info = {};
-  if (!user || user.games_played < 5) {
-    rank_info.text = 'Unranked';
-  } else {
-    rank_info = get_rank(user.elo);
+  const ranks = get_user_ranks(user_id);
+  if (!ranks) {
+    await reply(msg.from, lobby, `${requested_username} hasn't played in a ranked lobby yet.`);
+    return;
   }
 
-  if (rank_info.text == 'Unranked') {
-    if (requested_username === msg.from) {
-      const games_played = user ? user.games_played : 0;
-      await reply(msg.from, lobby, `You are unranked. Play ${5 - games_played} more game${games_played < 4 ? 's' : ''} to get a rank!`);
-    } else {
-      await reply(msg.from, lobby, `${requested_username} is unranked.`);
-    }
-  } else {
-    await reply(msg.from, lobby, `[${Config.website_base_url}/u/${user.user_id}/ ${requested_username}] | Rank: ${rank_info.text} (#${rank_info.rank_nb}) | Elo: ${Math.round(rank_info.elo)} | Games played: ${user.games_played}`);
-  }
+  const rank_info = ranks[lobby.data.ruleset];
+  await reply(msg.from, lobby, `[${Config.website_base_url}/u/${user_id}/ ${requested_username}] | Rank: ${rank_info.text} (#${rank_info.rank_nb}) | Elo: ${Math.round(rank_info.elo)} | Games played: ${rank_info.nb_scores}`);
 }
 
 async function start_command(msg, match, lobby) {
@@ -246,14 +219,13 @@ async function skip_command(msg, match, lobby) {
   if (lobby.beatmap_id && !lobby.map_data) {
     try {
       console.info(`[API] Fetching map data for map ID ${lobby.beatmap_id}`);
-      const res = await osu_fetch(`https://osu.ppy.sh/api/v2/beatmaps/lookup?id=${lobby.beatmap_id}`);
-      lobby.map_data = await res.json();
+      lobby.map_data = await osu_fetch(`https://osu.ppy.sh/api/v2/beatmaps/lookup?id=${lobby.beatmap_id}`);
 
       if (lobby.map_data.beatmapset.availability.download_disabled) {
         clearTimeout(lobby.countdown);
         lobby.countdown = -1;
 
-        stmts.dmca_map.run(lobby.beatmap_id);
+        db.prepare(`UPDATE full_map SET dmca = 1 WHERE map_id = ?`).run(lobby.beatmap_id);
         await lobby.select_next_map();
         await lobby.send(`Skipped previous map because download was unavailable [${lobby.map_data.beatmapset.availability.more_information} (more info)].`);
         return;

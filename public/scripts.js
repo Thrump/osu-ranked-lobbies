@@ -28,16 +28,19 @@ function stars_to_color(sr) {
 
 
 function click_listener(evt) {
-  // Intercept clicks that don't lead to an external domain
-  if (this.tagName == 'A') {
-    if (this.host == location.host && this.target != '_blank') {
-      evt.preventDefault();
+  if (this.pathname == '/osu_login') {
+    document.cookie = 'redirect=' + location.pathname.split('/')[1];
+    return true;
+  }
 
-      console.log('Loading ' + this.href);
-      window.history.pushState({}, 'osu! ranked lobbies', this.href);
-      document.querySelector('main').innerHTML = '';
-      route(this.href);
-    }
+  // Intercept clicks that don't lead to an external domain
+  if (this.host == location.host && this.target != '_blank') {
+    evt.preventDefault();
+
+    console.log('Loading ' + this.href);
+    window.history.pushState({}, 'osu! ranked lobbies', this.href);
+    document.querySelector('main').innerHTML = '';
+    route(this.href);
   }
 };
 
@@ -169,9 +172,9 @@ async function render_lobbies() {
 }
 
 
-async function render_leaderboard(page_num) {
+async function render_leaderboard(ruleset, page_num) {
   document.title = 'Leaderboard - o!RL';
-  const json = await get(`/api/leaderboard/${page_num}`);
+  const json = await get(`/api/leaderboard/${ruleset}/${page_num}`);
 
   const template = document.querySelector('#leaderboard-template').content.cloneNode(true);
   template.querySelector('.nb-ranked').innerText = `${json.nb_ranked_players} ranked players`;
@@ -197,15 +200,25 @@ async function render_leaderboard(page_num) {
   }
 
   const pagi_div = template.querySelector('.pagination');
-  render_pagination(pagi_div, json.page, json.max_pages, (num) => `/leaderboard/page-${num}/`);
+  render_pagination(pagi_div, json.page, json.max_pages, (num) => `/leaderboard/osu/page-${num}/`);
 
   document.querySelector('main').appendChild(template);
 }
 
 
-async function render_user(user_id, page_num) {
+async function render_user(user_id, ruleset, page_num) {
   const json = await get('/api/user/' + user_id);
   document.title = `${json.username} - o!RL`;
+
+  const rulesets = ['osu', 'catch', 'mania', 'taiko'];
+  const rulesets2 = ['osu', 'fruits', 'mania', 'taiko'];
+  let mode = rulesets.indexOf(ruleset);
+  if (mode == -1) {
+    const best_rank = json.ranks.reduce((prev, curr) => prev.ratio > curr.ratio ? prev : curr);
+    mode = best_rank.mode;
+    ruleset = rulesets[mode];
+  }
+
 
   const template = document.querySelector('#user-template').content.cloneNode(true);
   template.querySelector('.heading-left img').src = `https://s.ppy.sh/a/${json.user_id}`;
@@ -213,24 +226,18 @@ async function render_user(user_id, page_num) {
   template.querySelector('.heading-right .subheading').href = `https://osu.ppy.sh/users/${json.user_id}`;
 
   const blocks = template.querySelectorAll('.user-focus-block');
-  if (json.is_ranked) {
-    blocks[0].innerHTML = `<span>${json.rank.text}</span><span>Rank #${json.rank.rank_nb}</span>`;
-    blocks[1].innerHTML = `<span>${json.games_played}</span><span>Games Played</span>`;
-    blocks[2].innerHTML = `<span>${json.elo}</span><span>Elo</span>`;
-  } else {
-    blocks[0].innerHTML = `<span>Unranked</span><span>Rank #???</span>`;
-    blocks[1].innerHTML = `<span>${json.games_played}</span><span>Games Played</span>`;
-    blocks[2].remove();
-  }
+  blocks[0].innerHTML = `<span>${json.ranks[mode].text}</span><span>Rank #${json.ranks[mode].rank_nb}</span>`;
+  blocks[1].innerHTML = `<span>${json.ranks[mode].nb_scores}</span><span>Games Played</span>`;
+  blocks[2].innerHTML = `<span>${json.ranks[mode].elo}</span><span>Elo</span>`;
   document.querySelector('main').appendChild(template);
 
-  const matches_json = await get(`/api/user/${user_id}/matches/${page_num}`);
+  const matches_json = await get(`/api/user/${user_id}/${ruleset}/matches/${page_num}`);
   const tbody = document.querySelector('.match-history tbody');
   for (const match of matches_json.matches) {
     const row = document.createElement('tr');
     row.innerHTML = `
       <td class="map">
-        <a href="https://osu.ppy.sh/beatmapsets/${match.map.set_id}#osu/${match.map.id}"></a>
+        <a href="https://osu.ppy.sh/beatmapsets/${match.map.set_id}#${rulesets2[mode]}/${match.map.id}"></a>
       </td>
       <td>${match.placement}/${match.players_in_match}</td>
       <td ${match.negative ? 'class="red"' : ''} ${match.positive ? 'class="green"' : ''}>
@@ -333,19 +340,30 @@ async function route(new_url) {
   } else if (m = new_url.match(/\/lobbies\//)) {
     document.querySelector('main').innerHTML = '';
     await render_lobbies();
+  } else if (m = new_url.match(/\/leaderboard\/(.+)\/(page-(\d+)\/)?/)) {
+    const ruleset = m[1];
+    const page_num = m[3] || 1;
+    document.querySelector('main').innerHTML = '';
+    await render_leaderboard(ruleset, page_num);
   } else if (m = new_url.match(/\/leaderboard\/(page-(\d+)\/)?/)) {
     const page_num = m[2] || 1;
     document.querySelector('main').innerHTML = '';
-    await render_leaderboard(page_num);
-  } else if (m = new_url.match(/\/u\/(\d+)\/page-(\d+)\/?/)) {
+    await render_leaderboard('osu', page_num);
+  } else if (m = new_url.match(/\/u\/(\d+)\/(.+)\/page-(\d+)\/?/)) {
     const user_id = m[1];
-    const page_num = m[2] || 1;
+    const ruleset = m[2];
+    const page_num = m[3] || 1;
     document.querySelector('main').innerHTML = '';
-    await render_user(user_id, page_num);
+    await render_user(user_id, ruleset, page_num);
+  } else if (m = new_url.match(/\/u\/(\d+)\/(.+)\/?/)) {
+    const user_id = m[1];
+    const ruleset = m[2];
+    document.querySelector('main').innerHTML = '';
+    await render_user(user_id, ruleset, 1);
   } else if (m = new_url.match(/\/u\/(\d+)\/?/)) {
     const user_id = m[1];
     document.querySelector('main').innerHTML = '';
-    await render_user(user_id, 1);
+    await render_user(user_id, null, 1);
   } else {
     const main = document.querySelector('main');
     if (main.innerHTML.indexOf('{{ error }}') != -1) {

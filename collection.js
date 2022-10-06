@@ -42,7 +42,7 @@ async function select_next_map() {
 
   this.map = new_map;
   this.recently_played.push(new_map.id);
-  await this.send(`!mp map ${new_map.id} * | ${map_name} (${flavor}) Alternate downloads: ${beatconnect_link} ${chimu_link} ${nerina_link} ${sayobot_link}`);
+  await this.send(`!mp map ${new_map.id} ${this.data.ruleset} | ${map_name} (${flavor}) Alternate downloads: ${beatconnect_link} ${chimu_link} ${nerina_link} ${sayobot_link}`);
 }
 
 
@@ -71,7 +71,7 @@ async function init_lobby(lobby) {
   // Because we change the map *before* they rejoin the lobby, we need to re-select our map.
   lobby.on('playerChangedBeatmap', async () => {
     if (lobby.recently_played.includes(lobby.beatmap_id)) {
-      await lobby.send(`!mp map ${lobby.recently_played[lobby.recently_played.length - 1]} *`);
+      await lobby.send(`!mp map ${lobby.recently_played[lobby.recently_played.length - 1]} ${lobby.data.ruleset}`);
     }
   });
 

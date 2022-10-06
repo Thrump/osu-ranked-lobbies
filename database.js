@@ -14,7 +14,13 @@ if (process.argv[1].endsWith('recompute_ranks.js')) {
 }
 
 db.exec(`
+  -- Old stuff, needed to handle migration smoothly
+  CREATE TABLE IF NOT EXISTS old_discord_user (osu_id, discord_id, discord_rank);
+
+
   CREATE TABLE IF NOT EXISTS rating (
+    rowid          INTEGER PRIMARY KEY,
+
     mode           INTEGER NOT NULL, -- player: 0 = std, 1 = taiko, 2 = ctb, 3 = mania
                                      -- map:    4 = std, 5 = taiko, 6 = ctb, 7 = mania
                                      -- used for leaderboard indexing
@@ -22,9 +28,46 @@ db.exec(`
     base_sig       REAL    NOT NULL DEFAULT (350.0 / 173.7178),
     base_score_id  INTEGER NOT NULL DEFAULT 0,
     current_mu     REAL    NOT NULL,
-    current_sig    REAL    NOT NULL DEFAULT (350.0 / 173.7178)
+    current_sig    REAL    NOT NULL DEFAULT (350.0 / 173.7178),
+    nb_scores      INTEGER NOT NULL DEFAULT 0,
+    elo            REAL    NOT NULL DEFAULT 1500
   );
+
   CREATE INDEX IF NOT EXISTS rating_mode_idx ON rating(mode);
+  CREATE INDEX IF NOT EXISTS rating_elo_idx  ON rating(elo);
+
+  CREATE TRIGGER IF NOT EXISTS rating_elo_itrigger
+  AFTER INSERT ON rating
+  FOR EACH ROW BEGIN
+      UPDATE rating
+      SET elo = (current_mu * 173.7178 + 1500 - 3 * current_sig * 173.7178)
+      WHERE rowid = NEW.rowid;
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS rating_elo_utrigger
+  AFTER UPDATE OF current_mu, current_sig ON rating
+  FOR EACH ROW BEGIN
+      UPDATE rating
+      SET elo = (current_mu * 173.7178 + 1500 - 3 * current_sig * 173.7178)
+      WHERE rowid = NEW.rowid;
+
+      UPDATE full_user
+      SET osu_elo = NEW.elo
+      WHERE NEW.rowid = full_user.osu_rating AND NEW.mode = 0;
+
+      UPDATE full_user
+      SET catch_elo = NEW.elo
+      WHERE NEW.rowid = full_user.catch_rating AND NEW.mode = 1;
+
+      UPDATE full_user
+      SET mania_elo = NEW.elo
+      WHERE NEW.rowid = full_user.mania_rating AND NEW.mode = 2;
+
+      UPDATE full_user
+      SET taiko_elo = NEW.elo
+      WHERE NEW.rowid = full_user.taiko_rating AND NEW.mode = 3;
+  END;
+
 
   CREATE TABLE IF NOT EXISTS full_map (
     map_id        INTEGER PRIMARY KEY,
@@ -67,12 +110,16 @@ db.exec(`
     country_code    TEXT      NOT NULL,
     profile_data    TEXT      NOT NULL,
 
+    osu_elo         REAL      NOT NULL DEFAULT 1500,
     osu_rating      INTEGER   NOT NULL,
     osu_division    TEXT      NOT NULL DEFAULT 'Unranked',
+    catch_elo       REAL      NOT NULL DEFAULT 1500,
     catch_rating    INTEGER   NOT NULL,
     catch_division  TEXT      NOT NULL DEFAULT 'Unranked',
+    mania_elo       REAL      NOT NULL DEFAULT 1500,
     mania_rating    INTEGER   NOT NULL,
     mania_division  TEXT      NOT NULL DEFAULT 'Unranked',
+    taiko_elo       REAL      NOT NULL DEFAULT 1500,
     taiko_rating    INTEGER   NOT NULL,
     taiko_division  TEXT      NOT NULL DEFAULT 'Unranked',
 
@@ -99,15 +146,11 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS match (
     match_id   INTEGER PRIMARY KEY,
-    invite_id  INTEGER NOT NULL,
-    creator_id INTEGER NOT NULL,
-    name       TEXT    NOT NULL,
+    invite_id  INTEGER,
+    name       TEXT,
+    data       TEXT    NOT NULL DEFAULT '{"mode":"new"}',
     start_time INTEGER NOT NULL,
     end_time   INTEGER,
-
-    data       TEXT,
-    discord_channel_id TEXT,
-    discord_message_id TEXT,
 
     FOREIGN KEY(creator_id) REFERENCES full_user(user_id)
   );
@@ -132,8 +175,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS full_score (
     game_id      INTEGER NOT NULL,
     user_id      INTEGER NOT NULL,
-    slot         INTEGER NOT NULL,
-    team         INTEGER NOT NULL,
+    mode         INTEGER NOT NULL,
+    accuracy     REAL    NOT NULL,
     score        INTEGER NOT NULL,
     max_combo    INTEGER NOT NULL,
     count_50     INTEGER NOT NULL,
@@ -149,15 +192,22 @@ db.exec(`
     created_at   INTEGER NOT NULL,
     beatmap_id   INTEGER NOT NULL,
     dodged       INTEGER NOT NULL,
+    won          INTEGER NOT NULL GENERATED ALWAYS AS ((NOT dodged) AND pass AND (accuracy > 0.95)) VIRTUAL,
 
     FOREIGN KEY(game_id)    REFERENCES game(game_id),
     FOREIGN KEY(user_id)    REFERENCES full_user(user_id),
     FOREIGN KEY(beatmap_id) REFERENCES full_map(map_id)
   );
-  CREATE INDEX IF NOT EXISTS full_game_id_idx    ON full_score(beatmap_id);
-  CREATE INDEX IF NOT EXISTS full_score_user_idx ON full_score(user_id);
+  CREATE INDEX IF NOT EXISTS full_score_beatmap_idx ON full_score(beatmap_id);
+  CREATE INDEX IF NOT EXISTS full_score_user_idx    ON full_score(user_id);
 
-  -- TODO: discord auth tokens, website auth tokens
+
+  CREATE TABLE IF NOT EXISTS token (
+    token      TEXT    NOT NULL,
+    created_at INTEGER NOT NULL,
+    osu_id     INTEGER,
+    discord_id TEXT
+  );
 `);
 
 export default db;

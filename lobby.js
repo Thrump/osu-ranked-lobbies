@@ -6,40 +6,7 @@ import db from './database.js';
 
 import Config from './util/config.js';
 import {capture_sentry_exception} from './util/helpers.js';
-
-const fetch_lobby_stmt = databases.ranks.prepare(
-    `SELECT * FROM lobby WHERE id = ?`,
-);
-const create_lobby_stmt = databases.ranks.prepare(
-    `INSERT INTO lobby (id, data) VALUES (?, '{}')`,
-);
-const update_lobby_stmt = databases.ranks.prepare(
-    `UPDATE lobby SET data = ? WHERE id = ?`,
-);
-
-
-// Try to get a player object from a username, and return a placeholder player
-// object if we didn't succeed.
-async function try_get_player(display_username) {
-  const stmt = databases.ranks.prepare('SELECT * FROM user WHERE username = ?');
-  let player = stmt.get(display_username);
-  if (!player) {
-    // Player will be fetched on the next !mp settings call, when we will have
-    // their id; leave them uninitialized for now.
-    player = {
-      username: display_username,
-      elo: 450, // hardcoded 1500 - (3 * 350)
-      approx_mu: 1500, approx_sig: 350,
-      aim_pp: 10.0, acc_pp: 1.0, speed_pp: 1.0, overall_pp: 1.0,
-      avg_ar: 8.0, avg_sr: 2.0,
-      last_contest_tms: 0,
-      last_update_tms: 0,
-      games_played: 0, rank_text: 'Unranked',
-    };
-  }
-
-  return player;
-}
+import {init_user, get_user_by_id} from './user.js';
 
 
 class BanchoLobby extends EventEmitter {
@@ -49,35 +16,35 @@ class BanchoLobby extends EventEmitter {
     this.id = parseInt(channel.substring(4), 10);
     this.channel = channel;
     this.invite_id = null;
-    this.joined = false;
+
+    // A player is a full_player from the database (safe to assume they have a rank, etc)
+    // It has an additional irc_username field, that can differ from their actual username.
     this.players = [];
-    this.scores = [];
+
     this.voteaborts = [];
     this.voteskips = [];
-    this.nb_players = 0;
+    this.joined = false;
     this.playing = false;
 
-    let db_lobby = fetch_lobby_stmt.get(this.id);
-    if (!db_lobby) {
-      create_lobby_stmt.run(this.id);
-      db_lobby = {
-        id: this.id,
-        data: '{"mode":"new"}',
-      };
+    let match = db.prepare(`SELECT * FROM match WHERE match_id = ?`).get(this.id);
+    if (!match) {
+      match = db.prepare(
+          `INSERT INTO match (match_id, start_time) VALUES (?, ?) RETURNING *`,
+      ).get(this.id, Date.now());
     }
 
     // Save every lobby.data update to the database
     const lobby_id = this.id;
-    this.data = new Proxy(JSON.parse(db_lobby.data), {
+    this.data = new Proxy(JSON.parse(match.data), {
       set(obj, prop, value) {
         obj[prop] = value;
-        update_lobby_stmt.run(JSON.stringify(obj), lobby_id);
+        db.prepare(`UPDATE match SET data = ? WHERE match_id = ?`).run(JSON.stringify(obj), lobby_id);
         return true;
       },
     });
   }
 
-  async handle_line(line) {
+  handle_line(line) {
     const parts = line.split(' ');
 
     if (line == `:${Config.osu_username}!cho@ppy.sh PART :${this.channel}`) {
@@ -119,7 +86,6 @@ class BanchoLobby extends EventEmitter {
         const mods_regex = /Active mods: (.+)/;
         const players_regex = /Players: (\d+)/;
         const slot_regex = /Slot (\d+) +(.+?) +https:\/\/osu\.ppy\.sh\/u\/(\d+) (.+)/;
-        const score_regex = /(.+) finished playing \(Score: (\d+), (.+)\)\./;
         const ref_add_regex = /Added (.+) to the match referees/;
         const ref_del_regex = /Removed (.+) from the match referees/;
         const beatmap_change_regex = /Changed beatmap to https:\/\/osu\.ppy\.sh\/b\/(\d+) (.+)/;
@@ -132,7 +98,6 @@ class BanchoLobby extends EventEmitter {
         } else if (message == 'The match has started!') {
           this.voteaborts = [];
           this.voteskips = [];
-          this.scores = [];
           this.playing = true;
           this.emit('matchStarted');
         } else if (message == 'The match has finished!') {
@@ -176,77 +141,78 @@ class BanchoLobby extends EventEmitter {
         } else if (m = players_regex.exec(message)) {
           this.players = [];
           this.players_to_parse = parseInt(m[1], 10);
-          this.nb_players = this.players_to_parse;
         } else if (m = ref_add_regex.exec(message)) {
           this.emit('refereeAdded', m[1]);
         } else if (m = ref_del_regex.exec(message)) {
           if (m[1] == Config.osu_username) {
-            await this.send('Looks like we\'re done here.');
-            await this.leave();
+            this.leave();
           }
           this.emit('refereeRemoved', m[1]);
         } else if (m = slot_regex.exec(message)) {
-          const display_username = m[4].substring(0, 15).trimEnd();
-          const player = await try_get_player(display_username);
-          player.id = parseInt(m[3], 10);
-          player.user_id = player.id;
-          player.state = m[2];
-          player.is_host = m[4].substring(16).indexOf('Host') != -1;
-          if (player.is_host) {
-            this.host = player;
-          }
+          // !mp settings - single user result
+          get_user_by_id(parseInt(m[3], 10), true).then((player) => {
+            player.irc_username = m[4].substring(0, 15).trimEnd();
+            player.state = m[2];
+            player.is_host = m[4].substring(16).indexOf('Host') != -1;
+            if (player.is_host) {
+              this.host = player;
+            }
 
-          // TODO: parse mods
+            const elo_fields = ['osu_elo', 'catch_elo', 'mania_elo', 'taiko_elo'];
+            player.elo = player[elo_fields[lobby.data.ruleset]];
 
-          this.players = this.players.filter((player) => player.username != display_username);
-          this.players.push(player);
-
-          this.players_to_parse--;
-          if (this.players_to_parse == 0) {
-            this.emit('settings');
-          }
+            this.players = this.players.filter((p) => p.user_id != player.user_id);
+            this.players.push(player);
+            this.players_to_parse--;
+            if (this.players_to_parse == 0) {
+              this.emit('settings');
+            }
+          }).catch((err) => {
+            console.error(`Failed to init user on !mp settings`);
+            capture_sentry_exception(err);
+            this.players_to_parse--;
+            if (this.players_to_parse == 0) {
+              this.emit('settings');
+            }
+          });
         } else if (m = new_host_regex.exec(message)) {
+          // host changed
           for (const player of this.players) {
-            player.is_host = player.username == m[1];
+            player.is_host = player.irc_username == m[1];
             this.host = player;
           }
           this.emit('host');
-        } else if (m = score_regex.exec(message)) {
-          const score = {
-            username: m[1],
-            score: parseInt(m[2], 10),
-            state: m[3], // PASSED/FAILED
-          };
-
-          this.scores.push(score);
-          this.emit('score', score);
         } else if (m = joined_regex.exec(message)) {
-          const display_username = m[1];
-          const player = await try_get_player(display_username);
-          this.players.push(player);
-          this.nb_players++;
-          this.emit('playerJoined', player);
+          // player joined
+          get_user_by_name(m[1]).then((player) => {
+            player.irc_username = m[1];
+
+            const elo_fields = ['osu_elo', 'catch_elo', 'mania_elo', 'taiko_elo'];
+            player.elo = player[elo_fields[lobby.data.ruleset]];
+
+            this.players = this.players.filter((p) => p.user_id != player.user_id);
+            this.players.push(player);
+            this.emit('playerJoined', player);
+          }).catch((err) => {
+            // nothing to do ¯\_(ツ)_/¯
+            // will fix itself on the next !mp settings call.
+          });
         } else if (m = left_regex.exec(message)) {
-          const display_username = m[1];
+          // player left
+          const irc_username = m[1];
 
           let leaving_player = null;
           for (const player of this.players) {
-            if (player.username == display_username) {
+            if (player.irc_username == irc_username) {
               leaving_player = player;
               break;
             }
           }
 
-          if (leaving_player == null) {
-            leaving_player = {
-              username: display_username,
-            };
-          } else {
-            this.nb_players--;
-            this.players = this.players.filter((player) => player.username != display_username);
+          if (leaving_player != null) {
+            this.players = this.players.filter((player) => player.irc_username != irc_username);
+            this.emit('playerLeft', leaving_player);
           }
-
-          this.emit('playerLeft', leaving_player);
         }
 
         return;
@@ -259,27 +225,35 @@ class BanchoLobby extends EventEmitter {
 
       for (const cmd of commands) {
         const match = cmd.regex.exec(message);
-        if (match) {
-          if (!cmd.modes.includes(this.data.mode)) break;
+        if (!match) continue;
 
-          if (cmd.creator_only) {
-            const user_is_host = this.host && this.host.username == source;
-            if (!user_is_host && (this.data.creator_osu_id != await bancho.whois(source))) {
-              await this.send(`${source}: You need to be the lobby creator to use this command.`);
+        if (!cmd.modes.includes(this.data.mode)) break;
+
+        if (cmd.creator_only) {
+          const user_is_host = this.host && this.host.irc_username == source;
+          let user_is_creator = false;
+          for (const player of this.players) {
+            if (player.irc_username == source) {
+              user_is_creator = player.user_id == this.data.creator_osu_id;
               break;
             }
           }
 
-          await cmd.handler({from: source, message: message}, match, this);
-          break;
+          if (!user_is_host && !user_is_creator) {
+            this.send(`${source}: You need to be the lobby creator to use this command.`);
+            break;
+          }
         }
+
+        cmd.handler({from: source, message: message}, match, this);
+        break;
       }
 
       return;
     }
   }
 
-  async leave() {
+  leave() {
     if (!this.joined) {
       return;
     }
@@ -304,7 +278,7 @@ class BanchoLobby extends EventEmitter {
         Sentry.setContext('lobby', {
           id: this.id,
           median_pp: this.median_overall,
-          nb_players: this.nb_players,
+          nb_players: this.players.length,
           data: this.data,
           task: event_name,
         });

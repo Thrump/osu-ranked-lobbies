@@ -7,52 +7,16 @@ import cookieParser from 'cookie-parser';
 import crypto from 'crypto';
 
 import bancho from './bancho.js';
-import databases from './database.js';
-import {get_rank, get_rank_text_from_id} from './glicko.js';
+import db from './database.js';
+import {get_user_ranks} from './glicko.js';
 import {update_division, update_discord_username} from './discord_updates.js';
+import {init_user, get_user_by_id} from './user.js';
 import Config from './util/config.js';
 import {render_error} from './util/helpers.js';
 import {register_routes as register_api_routes} from './website_api.js';
 
 
 async function listen() {
-  const stmts = {
-    user_login: databases.ranks.prepare('SELECT user_id, expires_tms FROM website_tokens WHERE token = ?'),
-    delete_token: databases.ranks.prepare('DELETE FROM website_tokens WHERE user_id = ?'),
-    fetch_tokens: databases.ranks.prepare('SELECT user_id, token, expires_tms FROM website_tokens WHERE user_id = ?'),
-    insert_token: databases.ranks.prepare(`
-      INSERT INTO website_tokens (
-        user_id,
-        token,
-        expires_tms,
-        osu_access_token,
-        osu_refresh_token
-      ) VALUES (?, ?, ?, ?, ?)`,
-    ),
-    user_from_id: databases.ranks.prepare(`
-      SELECT * FROM user
-      WHERE user_id = ?`,
-    ),
-    search_player: databases.ranks.prepare(`
-      SELECT * FROM user
-      WHERE username LIKE ?
-      AND games_played > 0
-      ORDER BY elo DESC
-      LIMIT 5
-    `),
-    discord_from_ephemeral_token: databases.discord.prepare('SELECT * FROM auth_tokens WHERE ephemeral_token = ?'),
-    delete_ephemeral_token: databases.discord.prepare('DELETE FROM auth_tokens WHERE ephemeral_token = ?'),
-    user_from_discord_id: databases.discord.prepare('SELECT * FROM user WHERE discord_id = ?'),
-    link_account: databases.discord.prepare(`
-      INSERT INTO user (
-        discord_id,
-        osu_id,
-        osu_access_token,
-        osu_refresh_token
-      ) VALUES (?, ?, ?, ?)`,
-    ),
-  };
-
   const app = express();
 
   if (Config.ENABLE_SENTRY) {
@@ -71,10 +35,10 @@ async function listen() {
     const cookies = req.cookies;
 
     if (cookies && cookies.token) {
-      const user_token = stmts.user_login.get(cookies.token);
-      if (user_token) {
-        req.user_id = user_token.user_id;
-        res.set('X-Osu-ID', user_token.user_id);
+      const info = db.prepare(`SELECT osu_id FROM token WHERE token = ?`).get(cookies.token);
+      if (info) {
+        req.user_id = info.osu_id;
+        res.set('X-Osu-ID', info.osu_id);
         next();
         return;
       }
@@ -92,6 +56,11 @@ async function listen() {
 
   // Convenience redirect so we only have to generate the oauth URL here.
   app.get('/osu_login', (req, http_res) => {
+    if (!Config.IS_PRODUCTION) {
+      http_res.redirect('/auth');
+      return;
+    }
+
     http_res.redirect(`https://osu.ppy.sh/oauth/authorize?client_id=${Config.osu_v2api_client_id}&response_type=code&state=login&scope=identify&redirect_uri=${Config.website_base_url}/auth`);
   });
 
@@ -100,29 +69,11 @@ async function listen() {
 
     // Since OAuth is a pain in localhost, always authenticate outside of production.
     if (!Config.IS_PRODUCTION) {
-      const new_expires_tms = Date.now() + 99999999999;
       const new_auth_token = crypto.randomBytes(20).toString('hex');
-      stmts.insert_token.run(
-          Config.osu_id,
-          new_auth_token,
-          new_expires_tms,
-          '1234',
-          '5678',
-      );
-
-      const db_user = stmts.user_from_id.get(Config.osu_id);
-      if (!db_user) {
-        databases.ranks.prepare(`
-          INSERT INTO user (
-            user_id, username, approx_mu, approx_sig, games_played,
-            aim_pp, acc_pp, speed_pp, overall_pp, avg_ar, avg_sr
-          ) VALUES (?, ?, 1500, 350, 0, 10.0, 1.0, 1.0, 1.0, 8.0, 2.0)
-          RETURNING *`,
-        ).get(Config.osu_id, Config.osu_username);
-      }
-
-      http_res.cookie('token', new_auth_token, {sameSite: true});
-      http_res.redirect('/success');
+      db.prepare(`INSERT INTO token (token, created_at, osu_id) VALUES (?, ?, ?)`).run(new_auth_token, Date.now(), Config.osu_id);
+      await get_user_by_id(Config.osu_id, true); // init user if needed
+      http_res.cookie('token', new_auth_token, {maxAge: 99999999, sameSite: true});
+      http_res.redirect(`/success`);
       return;
     }
 
@@ -193,57 +144,34 @@ async function listen() {
       const user_profile = await fetchUserProfile(req, tokens.access_token);
       if (user_profile === null) return;
 
-      const user_token = stmts.fetch_tokens.get(user_profile.id);
-      const current_tms = Date.now();
-      if (user_token && user_token.expires_tms > current_tms) {
-        stmts.delete_token.run(user_token.user_id);
-      } else if (user_token) {
-        http_res.cookie('token', user_token.token, {sameSite: true});
-        http_res.redirect(`/u/${user_token.user_id}`);
+      const user_token = db.prepare(`SELECT token FROM token WHERE osu_id = ?`).get(user_profile.id);
+      if (user_token) {
+        http_res.cookie('token', user_token.token, {maxAge: 99999999, sameSite: true});
+        http_res.redirect(`/success`);
         return;
       }
 
-      const new_expires_tms = Date.now() + tokens.expires_in * 1000;
       const new_auth_token = crypto.randomBytes(20).toString('hex');
-      stmts.insert_token.run(
-          user_profile.id,
-          new_auth_token,
-          new_expires_tms,
-          tokens.access_token,
-          tokens.refresh_token,
-      );
+      db.prepare(`INSERT INTO token (token, created_at, osu_id) VALUES (?, ?, ?)`).run(new_auth_token, Date.now(), user_profile.id);
 
-      // If the user has never played in a ranked lobby, we still need to set
-      // their username to be able to DM them in-game (and avoid glitches in
-      // many places).
-      const db_user = stmts.user_from_id.get(user_profile.id);
-      if (!db_user) {
-        databases.ranks.prepare(`
-          INSERT INTO user (
-            user_id, username, approx_mu, approx_sig, games_played,
-            aim_pp, acc_pp, speed_pp, overall_pp, avg_ar, avg_sr
-          ) VALUES (?, ?, 1500, 350, 0, 10.0, 1.0, 1.0, 1.0, 8.0, 2.0)
-          RETURNING *`,
-        ).get(user_profile.id, user_profile.username);
-      }
+      // Initialize the user in the database if needed
+      await get_user_by_id(user_profile.id, true);
 
-      http_res.cookie('token', new_auth_token, {sameSite: true});
-      http_res.redirect(`/u/${user_profile.id}`);
+      http_res.cookie('token', new_auth_token, {maxAge: 99999999, sameSite: true});
+      http_res.redirect(`/success`);
       return;
     }
 
     // Get discord user id from ephemeral token
     const ephemeral_token = req.query.state;
-    res = stmts.discord_from_ephemeral_token.get(ephemeral_token);
-    if (!res) {
-      http_res.status(403).send(await render_error(req, 'Discord token invalid or expired. Please click the "Link account" button once again.', 403));
+    const discord_user_id = db.prepare(`SELECT discord_id FROM token WHERE token = ?`).get(ephemeral_token);
+    if (!discord_user_id) {
+      http_res.status(403).send(await render_error(req, 'Invalid Discord token. Please click the "Link account" button once again.', 403));
       return;
     }
-    stmts.delete_ephemeral_token.run(ephemeral_token);
-    const discord_user_id = res.discord_user_id;
 
     // Check if user didn't already link their account
-    res = stmts.user_from_discord_id.get(discord_user_id);
+    res = db.prepare(`SELECT * FROM full_user WHERE discord_user_id = ?`).get(discord_user_id);
     if (res) {
       http_res.redirect('/success');
       return;
@@ -256,19 +184,13 @@ async function listen() {
     if (user_profile === null) return;
 
     // Link accounts! Finally.
-    stmts.link_account.run( discord_user_id, user_profile.id, tokens.access_token, tokens.refresh_token);
+    db.prepare(`UPDATE full_user SET discord_user_id = ? WHERE user_id = ?`).run(discord_user_id, user_profile.id);
+    db.prepare(`DELETE FROM token WHERE token = ?`).run(ephemeral_token);
     http_res.redirect('/success');
 
     // Now for the fun part: add Discord roles, etc.
-    await update_discord_username(
-        user_profile.id,
-        user_profile.username,
-        'Linked their account',
-    );
-    await update_division(
-        user_profile.id,
-        get_rank_text_from_id(user_profile.id),
-    );
+    await update_discord_username(user_profile.id, user_profile.username, 'Linked their account');
+    await update_division(user_profile.id);
   });
 
   app.get('/success', async (req, http_res) => {
@@ -277,17 +199,18 @@ async function listen() {
     // If the user has just logged in. Redirect them to the page they were on before.
     if (req.cookies.redirect != null) {
       const redirect = req.cookies.redirect;
-      http_res.cookie('redirect', redirect, {maxAge: Date.now(0)});
+      http_res.clearCookie('redirect');
       http_res.redirect('/' + redirect + '/');
       http_res.end();
     } else {
       http_res.send(await render_error(req, 'Account linked!', 200, data));
+      http_res.end();
     }
-    http_res.end();
   });
 
   app.get('/search', async (req, http_res) => {
-    const players = stmts.search_player.all(`%${req.query.query}%`);
+    // TODO: sort by elo like before (but how?)
+    const players = db.prepare(`SELECT * FROM full_user WHERE username LIKE ? LIMIT 5`).all(`%${req.query.query}%`);
     http_res.set('Cache-control', 'public, max-age=60');
     http_res.json(players);
   });
@@ -310,7 +233,7 @@ async function listen() {
       return;
     }
 
-    const user = stmts.user_from_id.get(req.user_id);
+    const user = await get_user_by_id(req.user_id, false);
     await bancho.privmsg(user.username, `${user.username}, here's your invite: [http://osump://${inviting_lobby.invite_id}/ ${inviting_lobby.name}]`);
     http_res.send(await render_error(req, 'An invite to the lobby has been sent. Check your in-game messages.', 200));
   });
@@ -329,17 +252,20 @@ async function listen() {
   // Dirty hack to handle Discord embeds nicely
   app.get('/u/:userId', async (req, http_res) => {
     if (req.get('User-Agent').indexOf('Discordbot') != -1) {
-      const user = stmts.user_from_id.get(req.params.userId);
-      if (!user) {
+      const user = await get_user_by_id(req.params.userId, false);
+      const info = get_user_ranks(user.user_id);
+      if (!user || !info) {
         http_res.status(404).send('');
         return;
       }
 
-      const rank = get_rank(user.elo);
+      // Keep the best rank only
+      info.reduce((prev, curr) => prev.ratio > curr.ratio ? prev : curr);
+
       http_res.send(`<html>
         <head>
           <meta content="${user.username} - o!RL" property="og:title" />
-          <meta content="#${rank.rank_nb} - ${rank.text}" property="og:description" />
+          <meta content="#${info.rank_nb} - ${info.text}" property="og:description" />
           <meta content="https://osu.kiwec.net/u/${user.user_id}" property="og:url" />
           <meta content="https://s.ppy.sh/a/${user.user_id}" property="og:image" />
         </head>

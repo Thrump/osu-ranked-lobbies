@@ -1,75 +1,20 @@
 import bancho from './bancho.js';
-import databases from './database.js';
-import {update_mmr} from './glicko.js';
+import db from './database.js';
+import {save_game_and_update_rating} from './glicko.js';
+import {init_user, get_user_by_id} from './user.js';
 import Config from './util/config.js';
-
-
-async function get_full_players(match, game) {
-  const full_players = [];
-  const missing_player_ids = [];
-
-  for (const score of game.scores) {
-    const full_player = db.prepare(`SELECT * FROM full_user WHERE user_id = ?`).run(score.user_id);
-    if (full_player) {
-      // TODO check if username changed and call update_discord_username() if it did
-      full_players.push(full_player);
-    } else {
-      missing_player_ids.push(score.user_id);
-    }
-  }
-  if (missing_player_ids.length == 0) {
-    return full_players;
-  }
-
-  // New players, pog! Get their info.
-  let new_users = null;
-  try {
-    let args = `ids[0]=${missing_player_ids[0]}`;
-    for (let i = 1; i < missing_player_ids.length; i++) {
-      args += `&ids[${i}]=${missing_player_ids[i]}`;
-    }
-
-    new_users = await osu_fetch(`https://osu.ppy.sh/api/v2/users?${args}`);
-  } catch (err) {
-    console.error('Failed to fetch profiles for IDs: ' + missing_player_ids.toString());
-    capture_sentry_exception(err);
-    return full_players;
-  }
-
-  // Approximates elo from total_pp to suggest appropriate maps
-  const total_pp_to_mu = (total_pp) => {
-    let elo = total_pp * 0.15;
-
-    // Make sure we don't under- or over- rank someone based on their profile
-    if (elo < 500) elo = 500;
-    if (elo > 2500) elo = 2500;
-
-    return (elo - 1500) / 173.7178;
-  };
-  for (const user of new_users) {
-    // TODO: migrate older profile (discord_user_id, discord_role)
-
-    db.prepare(`
-      INSERT INTO full_user (user_id, username, country_code, profile_data, osu_mu, catch_mu, mania_mu, taiko_mu)
-      VALUES                (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(user.id, user.username, user.country_code, user,
-        total_pp_to_mu(user.statistics_rulesets.osu.pp),
-        total_pp_to_mu(user.statistics_rulesets.fruits.pp),
-        total_pp_to_mu(user.statistics_rulesets.mania.pp),
-        total_pp_to_mu(user.statistics_rulesets.taiko.pp),
-    );
-  }
-}
 
 
 async function set_new_title(lobby) {
   let new_title = '';
 
-  if (lobby.data.avg_sr) {
-    // TODO display lobby's avg sr instead of map sr
-    new_title = `${Math.round(lobby.map.stars, 0.1)}* x o!RL x Auto map select (!info)`;
+  const gamemodes = ['std', 'catch', 'mania', 'taiko'];
+  const ruleset = gamemodes[lobby.data.ruleset];
+
+  if (lobby.players.length > 0) {
+    new_title = `${Math.round(lobby.map.stars, 0.1)}* | o!RL ${ruleset} | Auto map select (!info)`;
   } else {
-    new_title = `o!RL x Auto map select (!info)`;
+    new_title = `o!RL ${ruleset} | Auto map select (!info)`;
   }
 
   if (!Config.IS_PRODUCTION) {
@@ -82,18 +27,46 @@ async function set_new_title(lobby) {
   }
 }
 
-async function update_median_pp(lobby) {
-  // TODO
+function update_median_elo(lobby) {
+  const elos = [];
+  for (const player of lobby.players) {
+    elos.push(player.elo);
+  }
+
+  if (elos.length == 0) {
+    lobby.median_elo = 1500;
+    return;
+  }
+
+  const middle = Math.floor(elos.length / 2);
+  if (elos.length % 2 == 0) {
+    lobby.median_elo = (elos[middle - 1] + elos[middle]) / 2;
+  } else {
+    lobby.median_elo = elos[middle];
+  }
 }
 
-function median(numbers) {
-  if (numbers.length == 0) return 0;
 
-  const middle = Math.floor(numbers.length / 2);
-  if (numbers.length % 2 === 0) {
-    return (numbers[middle - 1] + numbers[middle]) / 2;
+// When a map gets picked twice in the last 25 games, we automatically add
+// another map to the pool.
+function add_map_to_season(lobby) {
+  const full_map = db.prepare(`
+    SELECT * FROM full_map
+    WHERE season2 = 0 AND dmca = 0 AND ranked IN (4, 5, 7) AND mode = ?
+    INNER JOIN rating ON rating.rowid = full_map.rating_id
+    ORDER BY ABS(elo - ?) ASC LIMIT 1`,
+  ).get(lobby.data.ruleset, lobby.median_elo);
+  if (!full_map) {
+    // o_O
+    capture_sentry_exception(new Error('RAN OUT OF MAPS!!!!! LOL'));
+    return null;
   }
-  return numbers[middle];
+
+  db.prepare(
+      `UPDATE full_map SET season2 = ? WHERE map_id = ?`,
+  ).run(Date.now(), full_map.map_id);
+
+  return full_map;
 }
 
 async function select_next_map() {
@@ -105,21 +78,40 @@ async function select_next_map() {
     this.recent_maps.shift();
   }
 
-  const new_map = null;
-  // TODO select new_map
-  this.recent_maps.push(new_map.id);
-  const pp = new_map.overall_pp;
+  const select_map = () => {
+    // NOTE: in the future, we should increase the LIMIT to 1000
+    // However, the map pool starts pretty small and we need to pick relevant maps.
+    return db.prepare(`
+      SELECT * FROM (
+        SELECT * FROM full_map
+        WHERE season2 = 1 AND dmca = 0 AND mode = ?
+        INNER JOIN rating ON rating.rowid = full_map.rating_id
+        ORDER BY ABS(elo - ?) ASC LIMIT 100
+      ) ORDER BY RANDOM() LIMIT 1`,
+    ).get(lobby.data.ruleset, lobby.median_elo);
+  };
+
+  let new_map = select_map();
+  if (!new_map || this.recent_maps.includes(new_map.map_id)) {
+    new_map = add_map_to_season(this);
+    if (!new_map) {
+      // Just pick any map...
+      new_map = select_map();
+    }
+  }
+
+  this.recent_maps.push(new_map.map_id);
+  const map_elo = db.prepare(`SELECT elo FROM rating WHERE rowid = ?`).get(new_map.rating_id);
 
   try {
     const sr = new_map.stars;
-    // TODO display map elo too?
-    const flavor = `${sr.toFixed(2)}*, ${Math.round(pp)}pp`;
+    const flavor = `${sr.toFixed(2)}*, ${Math.round(map_elo.elo)} elo, ${Math.round(new_map.pp)}pp`;
     const map_name = `[https://osu.ppy.sh/beatmaps/${new_map.id} ${new_map.name}]`;
     const beatconnect_link = `[https://beatconnect.io/b/${new_map.set_id} [1]]`;
     const chimu_link = `[https://chimu.moe/d/${new_map.set_id} [2]]`;
     const nerina_link = `[https://api.nerinyan.moe/d/${new_map.set_id} [3]]`;
     const sayobot_link = `[https://osu.sayobot.cn/osu.php?s=${new_map.set_id} [4]]`;
-    await this.send(`!mp map ${new_map.id} * | ${map_name} (${flavor}) Alternate downloads: ${beatconnect_link} ${chimu_link} ${nerina_link} ${sayobot_link}`);
+    await this.send(`!mp map ${new_map.id} ${this.data.ruleset} | ${map_name} (${flavor}) Alternate downloads: ${beatconnect_link} ${chimu_link} ${nerina_link} ${sayobot_link}`);
     this.map = new_map;
     await set_new_title(this);
   } catch (e) {
@@ -136,6 +128,7 @@ async function init_lobby(lobby) {
   lobby.select_next_map = select_next_map;
   lobby.data.mode = 'ranked';
   lobby.match_end_timeout = -1;
+  lobby.median_elo = 1500;
 
   lobby.on('password', async () => {
     // Ranked lobbies never should have a password
@@ -151,7 +144,7 @@ async function init_lobby(lobby) {
       }
     }
 
-    update_median_pp(lobby);
+    update_median_elo(lobby);
 
     // Cannot select a map until we fetched the player IDs via !mp settings.
     if (lobby.created_just_now) {
@@ -161,11 +154,9 @@ async function init_lobby(lobby) {
   });
 
   lobby.on('playerJoined', async (player) => {
-    if (player.user_id) {
-      update_median_pp(lobby);
-      if (lobby.nb_players == 1) {
-        await lobby.select_next_map();
-      }
+    update_median_elo(lobby);
+    if (lobby.players.length == 1) {
+      await lobby.select_next_map();
     }
   });
 
@@ -183,8 +174,8 @@ async function init_lobby(lobby) {
       lobby.emit('score', score);
     }
 
-    update_median_pp(lobby);
-    if (lobby.nb_players == 0) {
+    update_median_elo(lobby);
+    if (lobby.players.length == 0) {
       await set_new_title(lobby);
     }
   });
@@ -242,10 +233,7 @@ async function init_lobby(lobby) {
     }
 
     await lobby.select_next_map();
-    if (!match || !game) return;
-
-    const players = await get_full_players(match, game);
-    await save_game_and_update_rating(lobby, game, players);
+    await save_game_and_update_rating(lobby, game);
   });
 
   lobby.on('allPlayersReady', async () => {

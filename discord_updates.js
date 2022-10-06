@@ -1,4 +1,5 @@
 import db from './database.js';
+import {get_user_by_id} from './user.js';
 import Config from './util/config.js';
 import {capture_sentry_exception} from './util/helpers.js';
 
@@ -29,7 +30,7 @@ async function get_discord_member(full_user) {
 async function update_discord_username(osu_user_id, new_username, reason) {
   if (!guild) return;
 
-  const full_user = db.prepare(`SELECT * FROM full_user WHERE user_id = ?`).get(osu_user_id);
+  const full_user = await get_user_by_id(osu_user_id, false);
   if (!full_user.discord_user_id) return;
 
   const member = await get_discord_member(full_user);
@@ -44,22 +45,18 @@ async function update_discord_username(osu_user_id, new_username, reason) {
 }
 
 
-async function update_division(osu_user_id, new_division) {
-  // Remove '++' suffix from the division
-  new_division = new_division.split('+')[0];
+async function update_division(osu_user_id) {
+  // Get best available division for this user, without '++' suffix
+  const info = get_user_ranks(osu_user_id);
+  info.reduce((prev, curr) => prev.ratio > curr.ratio ? prev : curr);
+  const new_division = info.text.split('+')[0];
 
-  const full_user = db.prepare(`SELECT * FROM full_user WHERE user_id = ?`).get(osu_user_id);
-  if (full_user.rank_division != new_division) {
-    db.prepare(`
-      UPDATE full_user
-      SET    rank_division = ?,
-      WHERE  user_id = ?
-    `).run(new_division, osu_user_id);
-  }
-
-  const old_role = full_user.discord_role;
+  const discord_user = db.prepare(
+      `SELECT discord_role, discord_user_id FROM full_user WHERE user_id = ?`,
+  ).get(osu_user_id);
+  const old_role = discord_user.discord_role;
   if (old_role == new_division) return;
-  const member = await get_discord_member(full_user);
+  const member = await get_discord_member(discord_user);
   if (!member) return;
 
   console.log(`[Discord] Updating role for user ${osu_user_id}: ${old_role} -> ${new_division}`);

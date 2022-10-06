@@ -11,37 +11,73 @@ dayjs.extend(relativeTime);
 
 import Config from './util/config.js';
 import bancho from './bancho.js';
-import databases from './database.js';
-import {get_rank} from './glicko.js';
+import db from './database.js';
+import {get_user_ranks} from './glicko.js';
 import {init_lobby as init_ranked_lobby} from './ranked.js';
 import {init_lobby as init_collection_lobby} from './collection.js';
 
 
-const stmts = {};
-
 const USER_NOT_FOUND = new Error('User not found. Have you played a game in a ranked lobby yet?');
-USER_NOT_FOUND.code = 404;
+USER_NOT_FOUND.http_code = 404;
+const RULESET_NOT_FOUND = new Error('Ruleset not found. Must be one of "osu", "catch", "mania" or "taiko".');
+RULESET_NOT_FOUND.http_code = 404;
 
 
-async function get_leaderboard_page(page_num) {
+function ruleset_to_mode(ruleset) {
+  if (ruleset == 'osu') {
+    return 0;
+  } else if (ruleset == 'catch') {
+    return 1;
+  } else if (ruleset == 'mania') {
+    return 2;
+  } else if (ruleset == 'taiko') {
+    return 3;
+  } else {
+    throw RULESET_NOT_FOUND;
+  }
+}
+
+function ruleset_to_rating_column(ruleset) {
+  if (ruleset == 'osu') {
+    return 'osu_rating';
+  } else if (ruleset == 'catch') {
+    return 'catch_rating';
+  } else if (ruleset == 'mania') {
+    return 'mania_rating';
+  } else if (ruleset == 'taiko') {
+    return 'taiko_rating';
+  } else {
+    throw RULESET_NOT_FOUND;
+  }
+}
+
+
+async function get_leaderboard_page(ruleset, page_num) {
   const PLAYERS_PER_PAGE = 20;
 
-  const month_ago_tms = Date.now() - (30 * 24 * 3600 * 1000);
-  const total_players = stmts.playercount.get(month_ago_tms);
+  const mode = ruleset_to_mode(ruleset);
+  const total_players = db.prepare(
+      `SELECT COUNT(*) AS nb FROM rating WHERE mode = ? AND nb_scores > 4`,
+  ).get(mode);
 
   // Fix user-provided page number
   const nb_pages = Math.ceil(total_players.nb / PLAYERS_PER_PAGE);
   if (page_num <= 0 || isNaN(page_num)) {
     page_num = 1;
-    // TODO: redirect?
   }
   if (page_num > nb_pages) {
     page_num = nb_pages;
-    // TODO: redirect?
   }
 
   const offset = (page_num - 1) * PLAYERS_PER_PAGE;
-  const res = stmts.leaderboard_page.all(month_ago_tms, PLAYERS_PER_PAGE, offset);
+
+  const res = db.prepare(`
+    SELECT user_id, username, elo FROM full_user
+    INNER JOIN rating ON full_user.${ruleset_to_rating_column(ruleset)} = rating.rowid
+    WHERE rating.mode = ? AND nb_scores > 4
+    ORDER BY elo DESC LIMIT ? OFFSET ?`,
+  ).all(mode, PLAYERS_PER_PAGE, offset);
+
   const data = {
     nb_ranked_players: total_players.nb,
     the_one: false,
@@ -79,39 +115,40 @@ async function get_leaderboard_page(page_num) {
 }
 
 async function get_user_profile(user_id) {
-  const user = stmts.user_by_id.get(user_id);
+  const user = db.prepare(`SELECT user_id, username FROM full_user WHERE user_id = ?`).get(user_id);
   if (!user) {
     throw USER_NOT_FOUND;
   }
 
-  const month_ago_tms = Date.now() - (30 * 24 * 3600 * 1000);
+  const rank_info = get_user_ranks(user_id);
   return {
     username: user.username,
     user_id: user.user_id,
-    games_played: user.games_played,
-    elo: Math.round(user.elo),
-    rank: get_rank(user.elo),
-    is_ranked: (user.games_played > 5 && user.last_contest_tms > month_ago_tms),
+    ranks: rank_info,
   };
 }
 
-async function get_user_matches(user_id, page_num) {
-  const user = stmts.user_by_id.get(user_id);
-  if (!user) {
-    throw USER_NOT_FOUND;
+async function get_user_matches(user_id, ruleset, page_num) {
+  const mode = ruleset_to_mode(ruleset);
+  const total_scores = db.prepare(
+      `SELECT COUNT(*) AS nb FROM full_score WHERE mode = ? AND user_id = ?`,
+  ).get(mode, user_id);
+  if (total_scores.nb == 0) {
+    return {
+      matches: [],
+      page: 1,
+      max_pages: 1,
+    };
   }
 
-  const MATCHES_PER_PAGE = 20;
-
   // Fix user-provided page number
-  const nb_pages = Math.ceil(user.games_played / MATCHES_PER_PAGE);
+  const MATCHES_PER_PAGE = 20;
+  const nb_pages = Math.ceil(user.nb_scores / MATCHES_PER_PAGE);
   if (page_num <= 0 || isNaN(page_num)) {
     page_num = 1;
-    // TODO: redirect?
   }
   if (page_num > nb_pages) {
     page_num = nb_pages;
-    // TODO: redirect?
   }
 
   const data = {
@@ -121,28 +158,17 @@ async function get_user_matches(user_id, page_num) {
   };
 
   const offset = (page_num - 1) * MATCHES_PER_PAGE;
-  const scores = stmts.user_scores_page.all(user.user_id, MATCHES_PER_PAGE, offset);
+  const scores = db.prepare(`
+    SELECT beatmap_id, created_at, won FROM full_score
+    WHERE user_id = ? AND mode = ?
+    ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+  ).all(user_id, mode, MATCHES_PER_PAGE, offset);
   for (const score of scores) {
-    const elo_change = Math.round(score.new_elo - score.old_elo);
-
-    let placement = 0;
-    const contest_scores = stmts.contest_scores.all(score.contest_id);
-    for (const contest_score of contest_scores) {
-      placement++;
-      if (contest_score.user_id == user.user_id) {
-        break;
-      }
-    }
-
     data.matches.push({
-      map: stmts.fetch_map.get(score.map_id),
-      placement: placement,
-      players_in_match: contest_scores.length,
-      elo_change: elo_change,
-      positive: elo_change > 0,
-      negative: elo_change < 0,
-      time: dayjs(score.tms).fromNow(),
-      tms: Math.round(score.tms / 1000),
+      map: db.prepare(`SELECT * FROM full_map WHERE map_id = ?`).get(score.beatmap_id),
+      won: score.won,
+      time: dayjs(score.created_at).fromNow(),
+      tms: Math.round(score.created_at / 1000),
     });
   }
 
@@ -150,38 +176,13 @@ async function get_user_matches(user_id, page_num) {
 }
 
 async function register_routes(app) {
-  stmts.fetch_map = databases.ranks.prepare('SELECT * FROM map WHERE id = ?');
-  stmts.playercount = databases.ranks.prepare(`
-    SELECT COUNT(*) AS nb FROM user
-    WHERE games_played > 4 AND last_contest_tms > ?`,
-  );
-  stmts.leaderboard_page = databases.ranks.prepare(`
-    SELECT * FROM user
-    WHERE games_played > 4 AND last_contest_tms > ?
-    ORDER BY elo DESC LIMIT ? OFFSET ?`,
-  );
-  stmts.user_by_id = databases.ranks.prepare(`
-    SELECT * FROM user
-    WHERE user_id = ?`,
-  );
-  stmts.user_scores_page = databases.ranks.prepare(`
-    SELECT * FROM score
-    WHERE user_id = ?
-    ORDER BY tms DESC LIMIT ? OFFSET ?`,
-  );
-  stmts.contest_scores = databases.ranks.prepare(`
-    SELECT user_id FROM score
-    WHERE contest_id = ?
-    ORDER BY score DESC`,
-  );
-
-  app.get('/api/leaderboard/:pageNum/', async (req, http_res) => {
+  app.get('/api/leaderboard/:ruleset/:pageNum/', async (req, http_res) => {
     try {
-      const data = await get_leaderboard_page(parseInt(req.params.pageNum, 10));
+      const data = await get_leaderboard_page(req.params.ruleset, parseInt(req.params.pageNum, 10));
       http_res.set('Cache-control', 'public, max-age=60');
       http_res.json(data);
     } catch (err) {
-      http_res.status(err.code).json({error: err.message});
+      http_res.status(err.http_code || 503).json({error: err.message});
     }
   });
 
@@ -191,20 +192,21 @@ async function register_routes(app) {
       http_res.set('Cache-control', 'public, max-age=60');
       http_res.json(data);
     } catch (err) {
-      http_res.status(err.code).json({error: err.message});
+      http_res.status(err.http_code || 503).json({error: err.message});
     }
   });
 
-  app.get('/api/user/:userId/matches/:pageNum/', async (req, http_res) => {
+  app.get('/api/user/:userId/:ruleset/matches/:pageNum/', async (req, http_res) => {
     try {
       const data = await get_user_matches(
           parseInt(req.params.userId, 10),
+          req.params.ruleset,
           parseInt(req.params.pageNum, 10),
       );
       http_res.set('Cache-control', 'public, max-age=60');
       http_res.json(data);
     } catch (err) {
-      http_res.status(err.code).json({error: err.message});
+      http_res.status(err.http_code || 503).json({error: err.message});
     }
   });
 
@@ -214,9 +216,10 @@ async function register_routes(app) {
     for (const lobby of bancho.joined_lobbies) {
       lobbies.push({
         bancho_id: lobby.invite_id,
-        nb_players: lobby.nb_players,
+        nb_players: lobby.players.length,
         name: lobby.name,
         mode: lobby.data.mode,
+        ruleset: lobby.data.ruleset,
         scorev2: lobby.data.is_scorev2,
         creator_name: lobby.data.creator,
         creator_id: lobby.data.creator_osu_id,
@@ -240,12 +243,11 @@ async function register_routes(app) {
       }
     }
 
-    let user = stmts.user_by_id.get(req.user_id);
+    let user = db.prepare(`SELECT username FROM full_user WHERE user_id = ?`).get(req.user_id);
     if (!user) {
       // User has never played in a ranked lobby.
       // But we still can create a lobby for them :)
       user = {
-        id: req.user_id,
         username: 'New user',
       };
     }
@@ -273,6 +275,7 @@ async function register_routes(app) {
       lobby.created_just_now = true;
       lobby.data.creator = user.username;
       lobby.data.creator_osu_id = req.user_id;
+      lobby.data.ruleset = parseInt(req.body.ruleset, 10);
 
       if (req.body.type == 'ranked') {
         await init_ranked_lobby(lobby);
@@ -302,7 +305,7 @@ async function register_routes(app) {
       success: true,
       lobby: {
         bancho_id: lobby.invite_id,
-        nb_players: lobby.nb_players,
+        nb_players: lobby.players.length,
         name: lobby.name,
         mode: lobby.data.mode,
         scorev2: lobby.data.is_scorev2,

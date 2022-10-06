@@ -3,7 +3,7 @@ import fs from 'fs';
 import {Client, Intents, MessageActionRow, MessageButton} from 'discord.js';
 
 import bancho from './bancho.js';
-import databases from './database.js';
+import db from './database.js';
 import {capture_sentry_exception} from './util/helpers.js';
 import Config from './util/config.js';
 
@@ -28,19 +28,16 @@ function init() {
 }
 
 async function on_interaction(interaction) {
-  const get_user_stmt = databases.discord.prepare('SELECT * FROM user WHERE discord_id = ?');
-  const user = get_user_stmt.get(interaction.user.id);
-
   if (interaction.isCommand()) {
     if (interaction.commandName == 'profile') {
-      let user = interaction.options.getUser('user');
-      if (!user) {
-        user = interaction.member;
+      let target = interaction.options.getUser('user');
+      if (!target) {
+        target = interaction.member;
       }
 
-      const target = get_user_stmt.get(user.id);
-      if (target) {
-        await interaction.reply(`${Config.website_base_url}/u/${target.osu_id}`);
+      const res = db.prepare(`SELECT * FROM full_user WHERE discord_user_id = ?`).get(target.id);
+      if (res) {
+        await interaction.reply(`${Config.website_base_url}/u/${res.user_id}`);
       } else {
         await interaction.reply({
           content: 'That user hasn\'t linked their osu! account yet.',
@@ -77,7 +74,7 @@ async function on_interaction(interaction) {
 
   try {
     if (interaction.customId == 'orl_link_osu_account') {
-      await on_link_osu_account_press(user, interaction);
+      await on_link_osu_account_press(interaction);
       return;
     }
   } catch (err) {
@@ -88,8 +85,9 @@ async function on_interaction(interaction) {
   }
 }
 
-async function on_link_osu_account_press(user, interaction) {
+async function on_link_osu_account_press(interaction) {
   // Check if user already linked their account
+  const user = db.prepare(`SELECT * FROM full_user WHERE discord_user_id = ?`).get(interaction.user.id);
   if (user) {
     await interaction.member.roles.add(Config.discord_linked_account_role_id);
     await interaction.reply({
@@ -100,11 +98,13 @@ async function on_link_osu_account_press(user, interaction) {
   }
 
   // Create ephemeral token
+
+  const discord_user_id = db.prepare(`SELECT discord_id FROM token WHERE token = ?`).get(ephemeral_token);
+
   const ephemeral_token = crypto.randomBytes(16).toString('hex');
-  let stmt = databases.discord.prepare('DELETE from auth_tokens WHERE discord_user_id = ?');
-  stmt.run(interaction.user.id);
-  stmt = databases.discord.prepare('INSERT INTO auth_tokens (discord_user_id, ephemeral_token) VALUES (?, ?)');
-  stmt.run(interaction.user.id, ephemeral_token);
+  db.prepare(
+      `INSERT INTO token (token, created_at, discord_id) VALUES (?, ?, ?)`,
+  ).run(interaction.user.id, Date.now(), ephemeral_token);
 
   // Send authorization link
   await interaction.reply({

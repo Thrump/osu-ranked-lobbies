@@ -55,8 +55,9 @@ async function osu_fetch(url, options) {
     await promisify(setTimeout)(1000);
     return await osu_fetch(url, options);
   } else {
-    return res;
+    const json = await res.json();
+    return json;
   }
 }
 
-export default {osu_fetch};
+export {osu_fetch};
