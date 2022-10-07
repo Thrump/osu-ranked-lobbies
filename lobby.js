@@ -6,7 +6,7 @@ import db from './database.js';
 
 import Config from './util/config.js';
 import {capture_sentry_exception} from './util/helpers.js';
-import {init_user, get_user_by_id} from './user.js';
+import {init_user, get_user_by_id, get_user_by_name} from './user.js';
 
 
 class BanchoLobby extends EventEmitter {
@@ -22,7 +22,6 @@ class BanchoLobby extends EventEmitter {
     this.players = [];
 
     this.voteaborts = [];
-    this.voteskips = [];
     this.joined = false;
     this.playing = false;
 
@@ -59,6 +58,7 @@ class BanchoLobby extends EventEmitter {
     if (parts[1] == '332' && parts[3] == this.channel) {
       this.joined = true;
       this.invite_id = parseInt(parts[6].substring(1), 10);
+      db.prepare(`UPDATE match SET invite_id = ? WHERE match_id = ?`).run(this.invite_id, this.id);
       bancho.emit('lobbyJoined', {
         channel: this.channel,
         lobby: this,
@@ -97,11 +97,20 @@ class BanchoLobby extends EventEmitter {
           this.emit('host');
         } else if (message == 'The match has started!') {
           this.voteaborts = [];
-          this.voteskips = [];
           this.playing = true;
           this.emit('matchStarted');
         } else if (message == 'The match has finished!') {
           this.playing = false;
+
+          // Used for !skip command
+          for (const player of this.players) {
+            if (player.matches_finished) {
+              player.matches_finished++;
+            } else {
+              player.matches_finished = 1;
+            }
+          }
+
           this.emit('matchFinished');
         } else if (message == 'Aborted the match') {
           this.playing = false;
@@ -119,6 +128,7 @@ class BanchoLobby extends EventEmitter {
           this.id = parseInt(m[2], 10);
         } else if (m = room_name_updated_regex.exec(message)) {
           this.name = m[1];
+          db.prepare(`UPDATE match SET name = ? WHERE match_id = ?`).run(this.name, this.id);
         } else if (m = beatmap_regex.exec(message)) {
           this.map_data = null;
           this.beatmap_id = parseInt(m[1], 10);
@@ -158,8 +168,8 @@ class BanchoLobby extends EventEmitter {
               this.host = player;
             }
 
-            const elo_fields = ['osu_elo', 'catch_elo', 'mania_elo', 'taiko_elo'];
-            player.elo = player[elo_fields[lobby.data.ruleset]];
+            const elo_fields = ['osu_elo', 'taiko_elo', 'catch_elo', 'mania_elo'];
+            player.elo = player[elo_fields[this.data.ruleset]];
 
             this.players = this.players.filter((p) => p.user_id != player.user_id);
             this.players.push(player);
@@ -187,8 +197,8 @@ class BanchoLobby extends EventEmitter {
           get_user_by_name(m[1]).then((player) => {
             player.irc_username = m[1];
 
-            const elo_fields = ['osu_elo', 'catch_elo', 'mania_elo', 'taiko_elo'];
-            player.elo = player[elo_fields[lobby.data.ruleset]];
+            const elo_fields = ['osu_elo', 'taiko_elo', 'catch_elo', 'mania_elo'];
+            player.elo = player[elo_fields[this.data.ruleset]];
 
             this.players = this.players.filter((p) => p.user_id != player.user_id);
             this.players.push(player);
@@ -227,14 +237,14 @@ class BanchoLobby extends EventEmitter {
         const match = cmd.regex.exec(message);
         if (!match) continue;
 
-        if (!cmd.modes.includes(this.data.mode)) break;
+        if (!cmd.modes.includes(this.data.type)) break;
 
         if (cmd.creator_only) {
           const user_is_host = this.host && this.host.irc_username == source;
           let user_is_creator = false;
           for (const player of this.players) {
             if (player.irc_username == source) {
-              user_is_creator = player.user_id == this.data.creator_osu_id;
+              user_is_creator = player.user_id == this.data.creator_id;
               break;
             }
           }

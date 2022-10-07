@@ -171,7 +171,7 @@ async function listen() {
     }
 
     // Check if user didn't already link their account
-    res = db.prepare(`SELECT * FROM full_user WHERE discord_user_id = ?`).get(discord_user_id);
+    res = db.prepare(`SELECT * FROM user WHERE discord_user_id = ?`).get(discord_user_id);
     if (res) {
       http_res.redirect('/success');
       return;
@@ -184,7 +184,7 @@ async function listen() {
     if (user_profile === null) return;
 
     // Link accounts! Finally.
-    db.prepare(`UPDATE full_user SET discord_user_id = ? WHERE user_id = ?`).run(discord_user_id, user_profile.id);
+    db.prepare(`UPDATE user SET discord_user_id = ? WHERE user_id = ?`).run(discord_user_id, user_profile.id);
     db.prepare(`DELETE FROM token WHERE token = ?`).run(ephemeral_token);
     http_res.redirect('/success');
 
@@ -209,8 +209,11 @@ async function listen() {
   });
 
   app.get('/search', async (req, http_res) => {
-    // TODO: sort by elo like before (but how?)
-    const players = db.prepare(`SELECT * FROM full_user WHERE username LIKE ? LIMIT 5`).all(`%${req.query.query}%`);
+    const players = db.prepare(
+        `SELECT * FROM user WHERE username LIKE ?
+      ORDER BY MAX(osu_elo, taiko_elo, catch_elo, mania_elo)
+      LIMIT 5`,
+    ).all(`%${req.query.query}%`);
     http_res.set('Cache-control', 'public, max-age=60');
     http_res.json(players);
   });

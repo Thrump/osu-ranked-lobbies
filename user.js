@@ -11,11 +11,9 @@ async function init_user(user_id, user_data) {
 
   // Migrate old profiles
   const discord_user_id = null;
-  const discord_role = null;
-  const old_profile = db.prepare(`SELECT * FROM old_discord_user WHERE osu_id = ?`).get(user_id);
+  const old_profile = db.prepare(`SELECT discord_id FROM old_discord_user WHERE osu_id = ?`).get(user_id);
   if (old_profile) {
     discord_user_id = old_profile.discord_id;
-    discord_role = old_profile.discord_rank;
   }
 
   // Approximate elo from total_pp
@@ -32,37 +30,37 @@ async function init_user(user_id, user_data) {
       `INSERT INTO rating (mode, base_mu, current_mu) VALUES (0, ?, ?) RETURNING rowid`,
   ).get(osu_mu, osu_mu).rowid;
 
+  const taiko_mu = total_pp_to_mu(user_data.statistics_rulesets.taiko?.pp);
+  const taiko_rating = db.prepare(
+      `INSERT INTO rating (mode, base_mu, current_mu) VALUES (1, ?, ?) RETURNING rowid`,
+  ).get(taiko_mu, taiko_mu).rowid;
+
   const catch_mu = total_pp_to_mu(user_data.statistics_rulesets.fruits?.pp);
   const catch_rating = db.prepare(
-      `INSERT INTO rating (mode, base_mu, current_mu) VALUES (1, ?, ?) RETURNING rowid`,
+      `INSERT INTO rating (mode, base_mu, current_mu) VALUES (2, ?, ?) RETURNING rowid`,
   ).get(catch_mu, catch_mu).rowid;
 
   const mania_mu = total_pp_to_mu(user_data.statistics_rulesets.mania?.pp);
   const mania_rating = db.prepare(
-      `INSERT INTO rating (mode, base_mu, current_mu) VALUES (2, ?, ?) RETURNING rowid`,
+      `INSERT INTO rating (mode, base_mu, current_mu) VALUES (3, ?, ?) RETURNING rowid`,
   ).get(mania_mu, mania_mu).rowid;
 
-  const taiko_mu = total_pp_to_mu(user_data.statistics_rulesets.taiko?.pp);
-  const taiko_rating = db.prepare(
-      `INSERT INTO rating (mode, base_mu, current_mu) VALUES (3, ?, ?) RETURNING rowid`,
-  ).get(taiko_mu, taiko_mu).rowid;
-
   return db.prepare(`
-      INSERT INTO full_user (
+      INSERT INTO user (
         user_id, username, country_code, profile_data,
-        osu_rating, catch_rating, mania_rating, taiko_rating,
-        discord_user_id, discord_role
-      ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+        osu_rating, taiko_rating, catch_rating, mania_rating,
+        discord_user_id
+      ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
   ).get(
       user_id, user_data.username, user_data.country_code, JSON.stringify(user_data),
-      osu_rating, catch_rating, mania_rating, taiko_rating,
-      discord_user_id, discord_role,
+      osu_rating, taiko_rating, catch_rating, mania_rating,
+      discord_user_id,
   );
 }
 
 
 async function get_user_by_id(user_id, create) {
-  let user = db.prepare(`SELECT * FROM full_user WHERE user_id = ?`).get(user_id);
+  let user = db.prepare(`SELECT * FROM user WHERE user_id = ?`).get(user_id);
   if (user) {
     return user;
   }
@@ -76,7 +74,7 @@ async function get_user_by_id(user_id, create) {
 }
 
 async function get_user_by_name(name) {
-  let user = db.prepare(`SELECT * FROM full_user WHERE username = ?`).get(name);
+  let user = db.prepare(`SELECT * FROM user WHERE username = ?`).get(name);
   if (user) {
     return user;
   }

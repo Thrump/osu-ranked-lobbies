@@ -10,15 +10,15 @@ async function init(discord_client) {
 }
 
 
-async function get_discord_member(full_user) {
+async function get_discord_member(user) {
   if (!guild) return null;
 
   try {
-    return await guild.members.fetch(full_user.discord_user_id);
+    return await guild.members.fetch(user.discord_user_id);
   } catch (err) {
-    console.error(`[Discord] <@${full_user.discord_user_id}> left the discord server: ${err}`);
+    console.error(`[Discord] <@${user.discord_user_id}> left the discord server: ${err}`);
     db.prepare(`
-      UPDATE full_user
+      UPDATE user
       SET    discord_user_id = NULL, discord_rank = NULL
       WHERE  user_id = ?
     `).run(osu_user_id);
@@ -30,10 +30,10 @@ async function get_discord_member(full_user) {
 async function update_discord_username(osu_user_id, new_username, reason) {
   if (!guild) return;
 
-  const full_user = await get_user_by_id(osu_user_id, false);
-  if (!full_user.discord_user_id) return;
+  const user = await get_user_by_id(osu_user_id, false);
+  if (!user.discord_user_id) return;
 
-  const member = await get_discord_member(full_user);
+  const member = await get_discord_member(user);
   if (!member) return;
 
   try {
@@ -52,7 +52,7 @@ async function update_division(osu_user_id) {
   const new_division = info.text.split('+')[0];
 
   const discord_user = db.prepare(
-      `SELECT discord_role, discord_user_id FROM full_user WHERE user_id = ?`,
+      `SELECT discord_role, discord_user_id FROM user WHERE user_id = ?`,
   ).get(osu_user_id);
   const old_role = discord_user.discord_role;
   if (old_role == new_division) return;

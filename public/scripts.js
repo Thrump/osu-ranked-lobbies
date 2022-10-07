@@ -210,8 +210,8 @@ async function render_user(user_id, ruleset, page_num) {
   const json = await get('/api/user/' + user_id);
   document.title = `${json.username} - o!RL`;
 
-  const rulesets = ['osu', 'catch', 'mania', 'taiko'];
-  const rulesets2 = ['osu', 'fruits', 'mania', 'taiko'];
+  const rulesets = ['osu', 'taiko', 'catch', 'mania'];
+  const rulesets2 = ['osu', 'taiko', 'fruits', 'mania'];
   let mode = rulesets.indexOf(ruleset);
   if (mode == -1) {
     const best_rank = json.ranks.reduce((prev, curr) => prev.ratio > curr.ratio ? prev : curr);

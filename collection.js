@@ -20,7 +20,6 @@ async function select_next_map() {
 
   clearTimeout(this.countdown);
   this.countdown = -1;
-  this.voteskips = [];
 
   if (this.recently_played.length >= Math.min(25, this.data.collection.beatmapsets.length - 1)) {
     this.recently_played.shift();
@@ -64,7 +63,7 @@ async function load_collection(lobby, collection_id) {
 async function init_lobby(lobby) {
   lobby.recently_played = [];
   lobby.countdown = -1;
-  lobby.data.mode = 'collection';
+  lobby.data.type = 'collection';
   lobby.select_next_map = select_next_map;
 
   // After the host finishes playing, their client resets the map to the one they played.

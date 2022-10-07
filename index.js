@@ -18,9 +18,9 @@ async function rejoin_lobbies() {
 
     try {
       const bancho_lobby = await bancho.join('#mp_' + match.match_id);
-      if (bancho_lobby.data.mode == 'ranked') {
+      if (bancho_lobby.data.type == 'ranked') {
         await init_ranked_lobby(bancho_lobby);
-      } else if (bancho_lobby.data.mode == 'collection') {
+      } else if (bancho_lobby.data.type == 'collection') {
         await init_collection_lobby(bancho_lobby);
       }
     } catch (err) {
@@ -102,11 +102,12 @@ async function main() {
 // fine to create them optimistically, since players won't see them without
 // searching.
 async function create_lobby_if_needed() {
+  let i = 0;
   const lobbies_to_create = [
-    {ruleset: 0, slug: 'std'},
-    {ruleset: 1, slug: 'catch'},
-    {ruleset: 2, slug: 'mania'},
-    {ruleset: 3, slug: 'taiko'},
+    // {ruleset: 0, slug: 'std', title: 'o!RL std (!info)'},
+    // {ruleset: 1, slug: 'taiko', title: 'o!RL taiko (!info)'},
+    // {ruleset: 2, slug: 'catch', title: 'o!RL catch (!info)'},
+    {ruleset: 3, slug: 'mania', title: 'o!RL mania 4k (!info)'},
   ];
   for (const to_create of lobbies_to_create) {
     const already_created = bancho._lobbies.some((lobby) => lobby.data.slug == to_create.slug);
@@ -114,10 +115,10 @@ async function create_lobby_if_needed() {
 
     try {
       console.log('Creating new lobby...');
-      const lobby = await bancho.make(`${to_create.min}-${to_create.max-0.01}* | o!RL | Auto map select (!about)`);
+      const lobby = await bancho.make(`New o!RL lobby ${i++}`);
       lobby.created_just_now = true;
       lobby.data.creator = Config.osu_username;
-      lobby.data.creator_osu_id = Config.osu_id;
+      lobby.data.creator_id = Config.osu_id;
       lobby.data.ruleset = to_create.ruleset;
       lobby.data.slug = to_create.slug;
       await init_ranked_lobby(lobby);

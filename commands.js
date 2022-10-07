@@ -7,6 +7,8 @@ import {init_lobby as init_ranked_lobby} from './ranked.js';
 import Config from './util/config.js';
 
 
+// TODO: !good / !bad map rating commands
+
 async function reply(user, lobby, message) {
   if (lobby) {
     await lobby.send(`${user}: ${message}`);
@@ -19,7 +21,7 @@ async function join_command(msg, match) {
   try {
     const lobby = await bancho.join('#mp_' + match[1]);
     lobby.data.creator = msg.from;
-    lobby.data.creator_osu_id = await bancho.whois(msg.from);
+    lobby.data.creator_id = await bancho.whois(msg.from);
     await lobby.send(`Hi! Type '!ranked' to start a ranked lobby, or '!collection <id>' to load a collection from osu!collector.`);
   } catch (err) {
     await bancho.privmsg(
@@ -32,7 +34,7 @@ async function join_command(msg, match) {
 
 async function collection_command(msg, match, lobby) {
   lobby.data.collection_id = match[1];
-  if (lobby.data.mode == 'new') {
+  if (lobby.data.type == 'new') {
     await init_collection_lobby(lobby);
   } else {
     try {
@@ -52,7 +54,7 @@ async function ranked_command(msg, match, lobby) {
 
 async function rank_command(msg, match, lobby) {
   const requested_username = match[1].trim() || msg.from;
-  let user_id = db.prepare(`SELECT user_id FROM full_user WHERE username = ?`).get(requested_username);
+  let user_id = db.prepare(`SELECT user_id FROM user WHERE username = ?`).get(requested_username);
   if (!user_id) {
     try {
       user_id = await bancho.whois(requested_username);
@@ -106,9 +108,9 @@ async function wait_command(msg, match, lobby) {
 
 async function about_command(msg, match, lobby) {
   if (lobby) {
-    if (lobby.data.mode == 'collection') {
+    if (lobby.data.type == 'collection') {
       await lobby.send(`This lobby will auto-select maps of a specific collection from osu!collector. All commands and answers to your questions are [${Config.discord_invite_link} in the Discord.]`);
-    } else if (lobby.data.mode == 'ranked') {
+    } else if (lobby.data.type == 'ranked') {
       await lobby.send(`In this lobby, you get a rank based on how well you play compared to other players. All commands and answers to your questions are [${Config.discord_invite_link} in the Discord.]`);
     } else {
       await lobby.send(`Bruh just send !collection <id> or !ranked`);
@@ -171,7 +173,7 @@ async function abort_command(msg, match, lobby) {
   if (!lobby.voteaborts.includes(msg.from)) {
     lobby.voteaborts.push(msg.from);
     const nb_voted_to_abort = lobby.voteaborts.length;
-    const nb_required_to_abort = Math.ceil(lobby.nb_players / 2);
+    const nb_required_to_abort = Math.ceil(lobby.nb_players / 4);
     if (lobby.voteaborts.length >= nb_required_to_abort) {
       await lobby.send(`!mp abort ${Math.random().toString(36).substring(2, 6)}`);
       lobby.voteaborts = [];
@@ -208,13 +210,7 @@ async function ban_command(msg, match, lobby) {
 }
 
 async function skip_command(msg, match, lobby) {
-  if (lobby.voteskips.includes(msg.from)) return;
-
-  if (lobby.host && lobby.host.username == msg.from) {
-    await lobby.select_next_map();
-    return;
-  }
-
+  // Skip map if DMCA'd
   // When bot just joined the lobby, beatmap_id is null.
   if (lobby.beatmap_id && !lobby.map_data) {
     try {
@@ -225,7 +221,7 @@ async function skip_command(msg, match, lobby) {
         clearTimeout(lobby.countdown);
         lobby.countdown = -1;
 
-        db.prepare(`UPDATE full_map SET dmca = 1 WHERE map_id = ?`).run(lobby.beatmap_id);
+        db.prepare(`UPDATE map SET dmca = 1 WHERE map_id = ?`).run(lobby.beatmap_id);
         await lobby.select_next_map();
         await lobby.send(`Skipped previous map because download was unavailable [${lobby.map_data.beatmapset.availability.more_information} (more info)].`);
         return;
@@ -235,14 +231,26 @@ async function skip_command(msg, match, lobby) {
     }
   }
 
-  lobby.voteskips.push(msg.from);
-  if (lobby.voteskips.length > lobby.nb_players / 2) {
-    clearTimeout(lobby.countdown);
-    lobby.countdown = -1;
-    await lobby.select_next_map();
-  } else {
-    await lobby.send(`${lobby.voteskips.length}/${Math.floor(lobby.nb_players / 2 + 1)} players voted to switch to another map.`);
+  // Skip map if player has been in the lobby long enough
+  for (const player of lobby.players) {
+    if (player.irc_username == msg.from) {
+      // Make sure the field is initialized
+      if (!player.matches_finished) {
+        player.matches_finished = 0;
+      }
+
+      if (player.matches_finished >= 5) {
+        player.matches_finished = 0;
+        await lobby.select_next_map();
+      } else {
+        await reply(msg.from, lobby, `You need to play ${5 - player.matches_finished} more matches in this lobby before you can skip.`);
+      }
+
+      return;
+    }
   }
+
+  await reply(msg.from, lobby, `You need to play 5 more matches in this lobby before you can skip.`);
 }
 
 async function toggle_scorev2_command(msg, match, lobby) {

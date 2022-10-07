@@ -35,6 +35,9 @@ const RANK_DIVISIONS = [
 ];
 
 
+// TODO: move to postgresql before deploy?
+
+
 // Recompute the rating of a map or a player
 // OGS-style: we keep a base rating and a current rating for better accuracy.
 // https://forums.online-go.com/t/ogs-has-a-new-glicko-2-based-rating-system/13058
@@ -47,6 +50,18 @@ async function update_rating(entity, ratings, is_player) {
   let outcomes = 0.0;
   let variance = 0.0;
   for (const score of ratings) {
+    const allowed_mods = ['HR', 'SD', 'PF', 'DT', 'NC', 'FI', 'FL', 'MR'];
+    let ignore_score = false;
+    for (const mod of score.mods) {
+      if (allowed_mods.indexOf(mod) == -1) {
+        ignore_score = true;
+        break;
+      }
+    }
+    if (ignore_score) {
+      continue;
+    }
+
     let score = 0.5;
     if (is_player) {
       // players get their score from themselves
@@ -101,12 +116,10 @@ async function update_rating(entity, ratings, is_player) {
 
 
 async function save_game_and_update_rating(lobby, game) {
-  if (!game || game.scores.length < 2) return [];
-
-  // TODO: handle dodgers - check if API includes them (doubt it does)
+  if (!game || !game.scores) return;
 
   const tms = Date.parse(game.end_time);
-  const rating_columns = ['osu_rating', 'catch_rating', 'mania_rating', 'taiko_rating'];
+  const rating_columns = ['osu_rating', 'taiko_rating', 'catch_rating', 'mania_rating'];
 
   db.prepare(`INSERT INTO game (
     game_id, match_id, start_time, end_time, beatmap_id,
@@ -116,6 +129,28 @@ async function save_game_and_update_rating(lobby, game) {
       game.mode_int, game.scoring_type, game.team_type, game.mods.toString(),
   );
 
+  // TODO: check if API includes dodgers (doubt it does)
+  for (const dodger of lobby.dodgers) {
+    game.scores.push({
+      user_id: dodger.user_id,
+      score: 0,
+      max_combo: 0,
+      statistics: {
+        count_50: 0,
+        count_100: 0,
+        count_300: 0,
+        count_miss: 0,
+        count_geki: 0,
+        count_katu: 0,
+      },
+      perfect: 0,
+      pass: 0,
+      mods: [],
+      created_at: new Date().toString(),
+      dodged: 1,
+    });
+  }
+
   const players = [];
   for (const score of game.scores) {
     let player = players.find((p) => p.user_id == score.user_id);
@@ -124,33 +159,33 @@ async function save_game_and_update_rating(lobby, game) {
     }
     players.push(player);
 
-    db.prepare(`INSERT INTO full_score (
-      game_id, user_id, slot, team, score, max_combo,
+    db.prepare(`INSERT INTO score (
+      game_id, user_id, mode, score, max_combo,
       count_50, count_100, count_300, count_miss, count_geki, count_katu,
       perfect, pass, enabled_mods, created_at, beatmap_id, dodged
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-        game.id, score.user_id, score.match.slot, score.match.team, score.score, score.max_combo,
+        game.id, score.user_id, game.mode_int, score.score, score.max_combo,
         score.statistics.count_50, score.statistics.count_100, score.statistics.count_300,
         score.statistics.count_miss, score.statistics.count_geki, score.statistics.count_katu,
         score.perfect, score.pass, score.mods.toString(), Date.parse(score.created_at),
-        game.beatmap.id, 0,
+        game.beatmap.id, score.dodged || 0,
     );
   }
 
   // Update map rating
   const map_rating = db.prepare(`
     SELECT * FROM rating
-    INNER JOIN full_map ON full_map.rating_id = rating.rowid
-    WHERE full_map.map_id = ?`,
+    INNER JOIN map ON map.rating_id = rating.rowid
+    WHERE map.map_id = ?`,
   ).get(game.beatmap.id);
 
   // All scores+ratings of players who played the map after base_score_id
   const scores = db.prepare(`
-    SELECT *, full_score.won AS won, full_score.rowid AS score_id FROM rating
-    INNER JOIN full_user  ON full_user.${rating_columns[game.mode_int]} = rating.rowid
-    INNER JOIN full_score ON full_user.user_id = full_score.user_id
-    WHERE full_score.beatmap_id = ? AND full_score.rowid > ?
-    ORDER BY full_score.rowid ASC`,
+    SELECT *, score.won AS won, score.rowid AS score_id FROM rating
+    INNER JOIN user  ON user.${rating_columns[game.mode_int]} = rating.rowid
+    INNER JOIN score ON user.user_id = score.user_id
+    WHERE score.beatmap_id = ? AND score.rowid > ?
+    ORDER BY score.rowid ASC`,
   ).get(game.beatmap.id, map_rating.base_score_id);
   await update_rating(map_rating, scores, false);
 
@@ -158,16 +193,16 @@ async function save_game_and_update_rating(lobby, game) {
   for (const score of game.scores) {
     const user_rating = db.prepare(`
       SELECT * FROM rating
-      INNER JOIN full_user ON full_user.${rating_columns[game.mode_int]} = rating.rowid
-      WHERE full_user.user_id = ?`,
+      INNER JOIN user ON user.${rating_columns[game.mode_int]} = rating.rowid
+      WHERE user.user_id = ?`,
     ).get(score.user_id);
 
     // All scores+ratings of maps played by the user after base_score_id
     const maps = db.prepare(`
-      SELECT *, full_score.won AS won, full_score.rowid AS score_id, FROM rating
-      INNER JOIN full_user  ON full_user.${rating_columns[game.mode_int]} = rating.rowid
-      INNER JOIN full_score ON full_user.user_id = full_score.user_id
-      WHERE full_score.user_id = ? AND full_score.rowid > ?`,
+      SELECT *, score.won AS won, score.rowid AS score_id, FROM rating
+      INNER JOIN user  ON user.${rating_columns[game.mode_int]} = rating.rowid
+      INNER JOIN score ON user.user_id = score.user_id
+      WHERE score.user_id = ? AND score.rowid > ?`,
     ).get(score.user_id, user_rating.base_score_id);
     await update_rating(user_rating, maps, true);
 
@@ -192,7 +227,7 @@ async function save_game_and_update_rating(lobby, game) {
     }
   };
 
-  const division_columns = ['osu_division', 'catch_division', 'mania_division', 'taiko_division'];
+  const division_columns = ['osu_division', 'taiko_division', 'catch_division', 'mania_division'];
   const all_users = db.prepare(`SELECT COUNT(*) AS nb FROM rating WHERE mode = ?`).get(game.mode_int);
   for (const player of players) {
     const better_users = db.prepare(
@@ -209,7 +244,7 @@ async function save_game_and_update_rating(lobby, game) {
         rank_changes.push(`${player.username} [${Config.website_base_url}/u/${player.user_id}/ ▼ ${new_rank_text} ]`);
       }
 
-      db.prepare(`UPDATE full_user SET ${division_column} = ? WHERE user_id = ?`).run(new_rank_text, player.user_id);
+      db.prepare(`UPDATE user SET ${division_column} = ? WHERE user_id = ?`).run(new_rank_text, player.user_id);
       update_division(player.user_id, new_rank_text); // async but don't care about result
     }
   }
@@ -257,10 +292,10 @@ function get_rank_text(rank_float, nb_scores) {
 
 function get_map_rank(map_id) {
   const res = db.prepare(`
-    SELECT nb_scores, elo, full_map.mode AS mode,
+    SELECT nb_scores, elo, map.mode AS mode,
     FROM rating
-    INNER JOIN full_map ON full_map.rating_id = rating.rowid
-    WHERE full_map.map_id = ?`,
+    INNER JOIN map ON map.rating_id = rating.rowid
+    WHERE map.map_id = ?`,
   ).get(map_id);
   const all = db.prepare(
       `SELECT COUNT(*) FROM rating WHERE mode = ?`,
@@ -287,15 +322,15 @@ function get_user_ranks(user_id) {
   const elos = db.prepare(`
     SELECT 
       a.elo AS osu_elo,   a.nb_scores AS nb_osu_scores,
-      b.elo AS catch_elo, b.nb_scores AS nb_catch_scores,
-      c.elo AS mania_elo, c.nb_scores AS nb_mania_scores,
-      d.elo AS taiko_elo, d.nb_scores AS nb_taiko_scores
-    FROM full_user
-    INNER JOIN rating a ON a.rowid = full_user.osu_rating
-    INNER JOIN rating b ON b.rowid = full_user.catch_rating
-    INNER JOIN rating c ON c.rowid = full_user.mania_rating
-    INNER JOIN rating d ON d.rowid = full_user.taiko_rating
-    WHERE full_user.user_id = ?`,
+      b.elo AS taiko_elo, b.nb_scores AS nb_taiko_scores
+      c.elo AS catch_elo, c.nb_scores AS nb_catch_scores,
+      d.elo AS mania_elo, d.nb_scores AS nb_mania_scores,
+    FROM user
+    INNER JOIN rating a ON a.rowid = user.osu_rating
+    INNER JOIN rating b ON b.rowid = user.taiko_rating
+    INNER JOIN rating c ON c.rowid = user.catch_rating
+    INNER JOIN rating d ON d.rowid = user.mania_rating
+    WHERE user.user_id = ?`,
   ).get(user_id);
   if (!elos) {
     return null;
@@ -303,16 +338,16 @@ function get_user_ranks(user_id) {
 
   const all_users = db.prepare(`SELECT
     (SELECT COUNT(*) FROM rating WHERE mode = 0) AS nb_osu,
-    (SELECT COUNT(*) FROM rating WHERE mode = 1) AS nb_catch,
-    (SELECT COUNT(*) FROM rating WHERE mode = 2) AS nb_mania,
-    (SELECT COUNT(*) FROM rating WHERE mode = 3) AS nb_taiko
+    (SELECT COUNT(*) FROM rating WHERE mode = 1) AS nb_taiko
+    (SELECT COUNT(*) FROM rating WHERE mode = 2) AS nb_catch,
+    (SELECT COUNT(*) FROM rating WHERE mode = 3) AS nb_mania,
   `).get();
   const better_users = db.prepare(`SELECT
     (SELECT COUNT(*) FROM rating WHERE mode = 0 AND elo > ?) AS nb_osu,
-    (SELECT COUNT(*) FROM rating WHERE mode = 1 AND elo > ?) AS nb_catch,
-    (SELECT COUNT(*) FROM rating WHERE mode = 2 AND elo > ?) AS nb_mania,
-    (SELECT COUNT(*) FROM rating WHERE mode = 3 AND elo > ?) AS nb_taiko
-  `).get(elos.osu_elo, elos.catch_elo, elos.mania_elo, elos.taiko_elo);
+    (SELECT COUNT(*) FROM rating WHERE mode = 1 AND elo > ?) AS nb_taiko
+    (SELECT COUNT(*) FROM rating WHERE mode = 2 AND elo > ?) AS nb_catch,
+    (SELECT COUNT(*) FROM rating WHERE mode = 3 AND elo > ?) AS nb_mania,
+  `).get(elos.osu_elo, elos.taiko_elo, elos.catch_elo, elos.mania_elo);
 
   const build_rating = (mode, elo, nb_total, nb_better, nb_scores) => {
     const ratio = 1.0 - (nb_better / nb_total);
@@ -328,9 +363,9 @@ function get_user_ranks(user_id) {
   };
   return [
     build_rating(0, elos.osu_elo, all_users.nb_osu, better_users.nb_osu, elos.nb_osu_scores),
-    build_rating(1, elos.catch_elo, all_users.nb_catch, better_users.nb_catch, elos.nb_catch_scores),
-    build_rating(2, elos.mania_elo, all_users.nb_mania, better_users.nb_mania, elos.nb_mania_scores),
-    build_rating(3, elos.taiko_elo, all_users.nb_taiko, better_users.nb_taiko, elos.nb_taiko_scores),
+    build_rating(1, elos.taiko_elo, all_users.nb_taiko, better_users.nb_taiko, elos.nb_taiko_scores),
+    build_rating(2, elos.catch_elo, all_users.nb_catch, better_users.nb_catch, elos.nb_catch_scores),
+    build_rating(3, elos.mania_elo, all_users.nb_mania, better_users.nb_mania, elos.nb_mania_scores),
   ];
 }
 

@@ -35,7 +35,7 @@ async function on_interaction(interaction) {
         target = interaction.member;
       }
 
-      const res = db.prepare(`SELECT * FROM full_user WHERE discord_user_id = ?`).get(target.id);
+      const res = db.prepare(`SELECT * FROM user WHERE discord_user_id = ?`).get(target.id);
       if (res) {
         await interaction.reply(`${Config.website_base_url}/u/${res.user_id}`);
       } else {
@@ -87,7 +87,7 @@ async function on_interaction(interaction) {
 
 async function on_link_osu_account_press(interaction) {
   // Check if user already linked their account
-  const user = db.prepare(`SELECT * FROM full_user WHERE discord_user_id = ?`).get(interaction.user.id);
+  const user = db.prepare(`SELECT * FROM user WHERE discord_user_id = ?`).get(interaction.user.id);
   if (user) {
     await interaction.member.roles.add(Config.discord_linked_account_role_id);
     await interaction.reply({

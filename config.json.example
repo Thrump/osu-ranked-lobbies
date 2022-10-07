@@ -1,14 +1,13 @@
 {
     "CONNECT_TO_BANCHO": false,
     "CREATE_LOBBIES": false,
-    "APPLY_RANK_DECAY": false,
     "MILLISECONDS_BETWEEN_SENDS": 1000,
     "osu_id": "your osu! id here",
     "osu_username": "your osu! username here",
     "osu_irc_password": "get it here: https://osu.ppy.sh/p/irc",
     "osu_v2api_client_id": 1234,
     "osu_v2api_client_secret": "get it here: https://osu.ppy.sh/home/account/edit#new-oauth-application",
-    "difficulty": 1.2,
+    "map_bucket_size": 100,
     "max_lobbies": 1,
 
     "CONNECT_TO_DISCORD": false,
