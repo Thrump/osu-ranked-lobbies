@@ -22,7 +22,7 @@ async function get_discord_member(user) {
       UPDATE user
       SET    discord_user_id = NULL, discord_role = NULL
       WHERE  user_id = ?
-    `).run(osu_user_id);
+    `).run(user.user_id);
     return null;
   }
 }
