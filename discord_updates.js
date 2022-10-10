@@ -68,7 +68,7 @@ async function update_division(osu_user_id) {
     'Gold': Config.discord_gold_role_id,
     'Platinum': Config.discord_platinum_role_id,
     'Diamond': Config.discord_diamond_role_id,
-    'Legendary': Config.discord_legendary_role_id,
+    'Rhythm Incarnate': Config.discord_legendary_role_id,
     'The One': Config.discord_the_one_role_id,
   };
 
@@ -81,9 +81,9 @@ async function update_division(osu_user_id) {
     role.members.each(async (member) => {
       try {
         await member.roles.remove(DISCORD_ROLES['The One']);
-        await member.roles.add(DISCORD_ROLES['Legendary']);
+        await member.roles.add(DISCORD_ROLES['Rhythm Incarnate']);
       } catch (err) {
-        console.error(`Failed to remove the one/add legendary to ${member}: ${err}`);
+        console.error(`Failed to remove the one/add Rhythm Incarnate to ${member}: ${err}`);
         capture_sentry_exception(err);
       }
     });

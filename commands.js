@@ -22,7 +22,7 @@ async function join_command(msg, match) {
     const lobby = await bancho.join('#mp_' + match[1]);
     lobby.data.creator = msg.from;
     lobby.data.creator_id = await bancho.whois(msg.from);
-    await lobby.send(`Hi! Type '!ranked' to start a ranked lobby, or '!collection <id>' to load a collection from osu!collector.`);
+    await lobby.send(`Hi! Type '!ranked <ruleset>' to start a ranked lobby, or '!collection <id>' to load a collection from osu!collector.`);
   } catch (err) {
     await bancho.privmsg(
         msg.from,
@@ -47,15 +47,35 @@ async function collection_command(msg, match, lobby) {
 }
 
 async function ranked_command(msg, match, lobby) {
+  const ruleset_name = match[1];
+
+  let ruleset_id;
+  if (ruleset == 'osu') {
+    ruleset_id = 0;
+  } else if (ruleset == 'taiko') {
+    ruleset_id = 1;
+  } else if (ruleset == 'catch' || ruleset == 'fruits') {
+    ruleset_id = 2;
+  } else if (ruleset == 'mania' || ruleset == '4k') {
+    ruleset_id = 3;
+  } else {
+    await reply(msg.from, lobby, `Invalid ruleset "${ruleset_name}". Please choose one of "osu", "taiko", "catch" or "mania".`);
+    return;
+  }
+
   lobby.created_just_now = true;
+  lobby.data.ruleset = ruleset_id;
   await init_ranked_lobby(lobby);
 }
 
 
 async function rank_command(msg, match, lobby) {
   const requested_username = match[1].trim() || msg.from;
-  let user_id = db.prepare(`SELECT user_id FROM user WHERE username = ?`).get(requested_username);
-  if (!user_id) {
+  const res = db.prepare(`SELECT user_id FROM user WHERE username = ?`).get(requested_username);
+  let user_id = null;
+  if (res) {
+    user_id = res.user_id;
+  } else {
     try {
       user_id = await bancho.whois(requested_username);
     } catch (err) {
@@ -70,7 +90,8 @@ async function rank_command(msg, match, lobby) {
   }
 
   const rank_info = ranks[lobby.data.ruleset];
-  await reply(msg.from, lobby, `[${Config.website_base_url}/u/${user_id}/ ${requested_username}] | Rank: ${rank_info.text} (#${rank_info.rank_nb}) | Elo: ${Math.round(rank_info.elo)} | Games played: ${rank_info.nb_scores}`);
+  const fancy_elo = rank_info.elo == '???' ? '???' : Math.round(rank_info.elo);
+  await reply(msg.from, lobby, `[${Config.website_base_url}/u/${user_id}/ ${requested_username}] | Rank: ${rank_info.text} (#${rank_info.rank_nb}) | Elo: ${fancy_elo} | Games played: ${rank_info.nb_scores}`);
 }
 
 async function start_command(msg, match, lobby) {
@@ -111,9 +132,9 @@ async function about_command(msg, match, lobby) {
     if (lobby.data.type == 'collection') {
       await lobby.send(`This lobby will auto-select maps of a specific collection from osu!collector. All commands and answers to your questions are [${Config.discord_invite_link} in the Discord.]`);
     } else if (lobby.data.type == 'ranked') {
-      await lobby.send(`In this lobby, you get a rank based on how well you play compared to other players. All commands and answers to your questions are [${Config.discord_invite_link} in the Discord.]`);
+      await lobby.send(`In this lobby, you get a rank based on how often you pass maps with 95% accuracy. All commands and answers to your questions are [${Config.discord_invite_link} in the Discord.]`);
     } else {
-      await lobby.send(`Bruh just send !collection <id> or !ranked`);
+      await lobby.send(`Bruh just send !collection <id> or !ranked <ruleset>`);
     }
   } else {
     await bancho.privmsg(msg.from, `This bot can join lobbies and do many things. Commands and answers to your questions are available [${Config.discord_invite_link} in the Discord.]`);
@@ -122,46 +143,6 @@ async function about_command(msg, match, lobby) {
 
 async function discord_command(msg, match, lobby) {
   await reply(msg.from, lobby, `[${Config.discord_invite_link} Come hang out in voice chat!] (or just text, no pressure)`);
-}
-
-async function stars_command(msg, match, lobby) {
-  const args = msg.message.split(' ');
-
-  // No arguments: remove star rating restrictions
-  if (args.length == 1) {
-    lobby.data.min_stars = 0.0;
-    lobby.data.max_stars = 11.0;
-    lobby.data.fixed_star_range = false;
-    await lobby.select_next_map();
-    return;
-  }
-
-  if (args.length < 3) {
-    await lobby.send(msg.from + ': You need to specify minimum and maximum star values.');
-    return;
-  }
-
-  const min_stars = parseFloat(args[1]);
-  const max_stars = parseFloat(args[2]);
-  if (isNaN(min_stars) || isNaN(max_stars) || min_stars >= max_stars || min_stars < 0 || max_stars > 99) {
-    await lobby.send(msg.from + ': Please use valid star values.');
-    return;
-  }
-
-  lobby.data.min_stars = min_stars;
-  lobby.data.max_stars = max_stars;
-  lobby.data.fixed_star_range = true;
-
-  // Auto-select ScoreV2 when necessary
-  if (typeof lobby.data.is_scorev2 === 'undefined') {
-    if (min_stars >= 6) {
-      await lobby.send(`!mp set 0 3 16`);
-    } else {
-      await lobby.send(`!mp set 0 0 16`);
-    }
-  }
-
-  await lobby.select_next_map();
 }
 
 async function abort_command(msg, match, lobby) {
@@ -253,16 +234,6 @@ async function skip_command(msg, match, lobby) {
   await reply(msg.from, lobby, `You need to play 5 more matches in this lobby before you can skip.`);
 }
 
-async function toggle_scorev2_command(msg, match, lobby) {
-  if (lobby.data.is_scorev2) {
-    await lobby.send(`!mp set 0 0 16`);
-    lobby.data.is_scorev2 = false;
-  } else {
-    await lobby.send(`!mp set 0 3 16`);
-    lobby.data.is_scorev2 = true;
-  }
-}
-
 const commands = [
   {
     regex: /!join (\d+)/gi,
@@ -277,7 +248,7 @@ const commands = [
     modes: ['new', 'collection'],
   },
   {
-    regex: /!ranked/gi,
+    regex: /!ranked (.+)/gi,
     handler: ranked_command,
     creator_only: true,
     modes: ['new'],
@@ -343,34 +314,16 @@ const commands = [
     modes: ['ranked'],
   },
   {
+    regex: /^!kick(.*)/gi,
+    handler: ban_command,
+    creator_only: false,
+    modes: ['ranked'],
+  },
+  {
     regex: /^!skip$/gi,
     handler: skip_command,
     creator_only: false,
     modes: ['collection', 'ranked'],
-  },
-  {
-    regex: /^!stars/gi,
-    handler: stars_command,
-    creator_only: true,
-    modes: ['ranked'],
-  },
-  {
-    regex: /^!setstar/gi,
-    handler: stars_command,
-    creator_only: true,
-    modes: ['ranked'],
-  },
-  {
-    regex: /^!sv\d/gi,
-    handler: toggle_scorev2_command,
-    creator_only: true,
-    modes: ['ranked'],
-  },
-  {
-    regex: /^!scorev\d/gi,
-    handler: toggle_scorev2_command,
-    creator_only: true,
-    modes: ['ranked'],
   },
 ];
 

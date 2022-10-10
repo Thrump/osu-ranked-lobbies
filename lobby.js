@@ -6,7 +6,7 @@ import db from './database.js';
 
 import Config from './util/config.js';
 import {capture_sentry_exception} from './util/helpers.js';
-import {init_user, get_user_by_id, get_user_by_name} from './user.js';
+import {get_user_by_id, get_user_by_name} from './user.js';
 
 
 class BanchoLobby extends EventEmitter {
@@ -50,7 +50,7 @@ class BanchoLobby extends EventEmitter {
       this.joined = false;
       db.prepare(`UPDATE match SET end_time = ? WHERE match_id = ?`).run(Date.now(), this.id);
       bancho._lobbies.splice(bancho._lobbies.indexOf(this), 1);
-      bancho.joined_lobbies.splice(bancho.joined_lobbies.indexOf(lobby), 1);
+      bancho.joined_lobbies.splice(bancho.joined_lobbies.indexOf(this), 1);
       this.emit('close');
       return;
     }
@@ -168,9 +168,6 @@ class BanchoLobby extends EventEmitter {
               this.host = player;
             }
 
-            const elo_fields = ['osu_elo', 'taiko_elo', 'catch_elo', 'mania_elo'];
-            player.elo = player[elo_fields[this.data.ruleset]];
-
             this.players = this.players.filter((p) => p.user_id != player.user_id);
             this.players.push(player);
             this.players_to_parse--;
@@ -196,10 +193,6 @@ class BanchoLobby extends EventEmitter {
           // player joined
           get_user_by_name(m[1]).then((player) => {
             player.irc_username = m[1];
-
-            const elo_fields = ['osu_elo', 'taiko_elo', 'catch_elo', 'mania_elo'];
-            player.elo = player[elo_fields[this.data.ruleset]];
-
             this.players = this.players.filter((p) => p.user_id != player.user_id);
             this.players.push(player);
             this.emit('playerJoined', player);

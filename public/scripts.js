@@ -135,7 +135,6 @@ function render_lobby(lobby) {
       <div class="lobby-creator">Created by <a href="/u/${lobby.creator_id}"><img src="https://s.ppy.sh/a/${lobby.creator_id}" alt="Lobby creator"> ${lobby.creator_name}</a></div>
     </div>
     <div class="lobby-links" style="background-color:${color}">
-      <div><a href="osu://mp/${lobby.bancho_id}"><i class="fa-solid fa-xs fa-arrow-up-right-from-square"></i></a><span>Join</span></div>
       <div><a href="/get-invite/${lobby.bancho_id}" target="_blank"><i class="fa-solid fa-xs fa-envelope"></i></a><span>Get invite</span></div>
     </div>`;
   lobby_div.querySelector('.lobby-title').innerText = lobby.name;
@@ -293,10 +292,10 @@ async function route(new_url) {
       try {
         const lobby_settings = {
           type: document.querySelector('input[name="lobby-type"]:checked').value,
+          ruleset: document.querySelector('input[name="ruleset"]:checked').value,
           star_rating: document.querySelector('main input[name="auto-star-rating"]').checked ? 'auto' : 'fixed',
           min_stars: parseFloat(document.querySelector('main input[name="min-stars"]').value),
           max_stars: parseFloat(document.querySelector('main input[name="max-stars"]').value),
-          scoring_system: document.querySelector('input[name="scoring-system"]:checked').value,
           title: document.querySelector('input[name="title"]').value,
         };
         const collection_input = document.querySelector('main input[name="collection-url"]');

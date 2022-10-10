@@ -10,7 +10,7 @@ import bancho from './bancho.js';
 import db from './database.js';
 import {get_user_ranks} from './glicko.js';
 import {update_division, update_discord_username} from './discord_updates.js';
-import {init_user, get_user_by_id} from './user.js';
+import {get_user_by_id} from './user.js';
 import Config from './util/config.js';
 import {render_error} from './util/helpers.js';
 import {register_routes as register_api_routes} from './website_api.js';

@@ -104,9 +104,9 @@ async function main() {
 async function create_lobby_if_needed() {
   let i = 0;
   const lobbies_to_create = [
-    // {ruleset: 0, slug: 'std', title: 'o!RL std (!info)'},
-    // {ruleset: 1, slug: 'taiko', title: 'o!RL taiko (!info)'},
-    // {ruleset: 2, slug: 'catch', title: 'o!RL catch (!info)'},
+    {ruleset: 0, slug: 'std', title: 'o!RL standard (!info)'},
+    {ruleset: 1, slug: 'taiko', title: 'o!RL taiko (!info)'},
+    {ruleset: 2, slug: 'catch', title: 'o!RL catch (!info)'},
     {ruleset: 3, slug: 'mania', title: 'o!RL mania 4k (!info)'},
   ];
   for (const to_create of lobbies_to_create) {

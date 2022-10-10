@@ -2,13 +2,15 @@
 // Intended to be run once then thrown away.
 //
 // Instructions for myself:
-// 1. Locally, run `node util/migrate_maps.js`
-// 2. Locally, run `node util/add_pool.js` for each map pool
-// 3. Upload orl.db to the server
-// 3.1. On the server, extract the latest .osu map dump
+// 1. Upload orl.db & maps.tar.gz to the server
+// 2. On the server, run `git pull; yarn install`
+// 3. On the server, extract maps.tar.gz
+// 3.5. Remove/re-add all ranks on the discord server
+// 3.6. Edit the config of the bot on the server to reflect new role IDs
 // 4. On the server, shut down the bot
 // 5. On the server, run `node util/migrate_users_and_lobbies.js`
 // 6. On the server, boot the bot back up
+// 7. `node util/deploy_prompts.js`
 
 import Database from 'better-sqlite3';
 

@@ -36,13 +36,15 @@ async function get_map_info(map_id, api_res) {
 
   // 2. Process it with rosu-pp
   const info = rosu.calculate({path: file})[0];
-  const approx_mu = (info.stars * 325 - 1500) / 173.7178; // 4.6* ~= 1500 elo (patented algorithm)
+  let approx_mu = (info.stars * 325 - 1500) / 173.7178; // 4.6* ~= 1500 elo (patented algorithm)
+  if (approx_mu < 0) approx_mu = 0;
+  if (approx_mu > 3000) approx_mu = 3000;
 
   // 3. Get additionnal map info from osu!api
   // (we can't get the following just from the .osu file: set_id, length, ranked, dmca)
   if (!api_res) {
     console.info(`[API] Fetching map data for map ID ${map_id}`);
-    const api_res = await osu_fetch(`https://osu.ppy.sh/api/v2/beatmaps/lookup?id=${map_id}`);
+    api_res = await osu_fetch(`https://osu.ppy.sh/api/v2/beatmaps/lookup?id=${map_id}`);
   }
 
   // 4. Cause eyeStrain to the reader

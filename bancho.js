@@ -318,6 +318,11 @@ class BanchoClient extends EventEmitter {
   // Intentionally fails after 5 seconds just in case.
   whois(irc_username) {
     return new Promise((resolve, reject) => {
+      if (irc_username.indexOf(' ') != -1) {
+        reject(new Error('Cannot WHOIS a username that contains spaces.'));
+        return;
+      }
+
       setTimeout(() => reject(new Error('Timeout out on whois request')), 5000);
       if (irc_username in this._whoare) {
         return resolve(this._whoare[irc_username]);

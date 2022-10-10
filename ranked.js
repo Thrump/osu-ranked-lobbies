@@ -1,8 +1,9 @@
+import {osu_fetch} from './api.js';
 import bancho from './bancho.js';
 import db from './database.js';
-import {save_game_and_update_rating} from './glicko.js';
-import {init_user, get_user_by_id} from './user.js';
+import {save_game_and_update_rating, get_map_rank} from './glicko.js';
 import Config from './util/config.js';
+import {capture_sentry_exception} from './util/helpers.js';
 
 
 async function set_new_title(lobby) {
@@ -27,22 +28,24 @@ async function set_new_title(lobby) {
   }
 }
 
-function update_median_elo(lobby) {
-  const elos = [];
+function update_median_mu(lobby) {
+  const rating_fields = ['osu_rating', 'taiko_rating', 'catch_rating', 'mania_rating'];
+
+  const mus = [];
   for (const player of lobby.players) {
-    elos.push(player.elo);
+    mus.push(player[rating_fields[lobby.data.ruleset]].current_mu);
   }
 
-  if (elos.length == 0) {
-    lobby.median_elo = 1500;
+  if (mus.length == 0) {
+    lobby.median_mu = 0;
     return;
   }
 
-  const middle = Math.floor(elos.length / 2);
-  if (elos.length % 2 == 0) {
-    lobby.median_elo = (elos[middle - 1] + elos[middle]) / 2;
+  const middle = Math.floor(mus.length / 2);
+  if (mus.length % 2 == 0) {
+    lobby.median_mu = (mus[middle - 1] + mus[middle]) / 2;
   } else {
-    lobby.median_elo = elos[middle];
+    lobby.median_mu = mus[middle];
   }
 }
 
@@ -55,8 +58,8 @@ function add_map_to_season(lobby) {
     INNER JOIN rating ON rating.rowid = map.rating_id
     WHERE season2 = 0 AND dmca = 0 AND ranked IN (4, 5, 7) AND map.mode = ?
     ${lobby.extra_filters}
-    ORDER BY ABS(elo - ?) ASC LIMIT 1`,
-  ).get(lobby.data.ruleset, lobby.median_elo);
+    ORDER BY ABS(current_mu - ?) ASC LIMIT 1`,
+  ).get(lobby.data.ruleset, lobby.median_mu);
   if (!map) {
     // o_O
     capture_sentry_exception(new Error('RAN OUT OF MAPS!!!!! LOL'));
@@ -85,9 +88,9 @@ async function select_next_map() {
         INNER JOIN rating ON rating.rowid = map.rating_id
         WHERE season2 > 0 AND dmca = 0 AND map.mode = ?
         ${this.extra_filters}
-        ORDER BY ABS(elo - ?) ASC LIMIT ?
+        ORDER BY ABS(current_mu - ?) ASC LIMIT ?
       ) ORDER BY RANDOM() LIMIT 1`,
-    ).get(this.data.ruleset, this.median_elo, Config.map_bucket_size);
+    ).get(this.data.ruleset, this.median_mu, Config.map_bucket_size);
   };
 
   let new_map = select_map();
@@ -100,11 +103,15 @@ async function select_next_map() {
   }
 
   this.recent_maps.push(new_map.map_id);
-  const map_elo = db.prepare(`SELECT elo FROM rating WHERE rowid = ?`).get(new_map.rating_id);
+  const map_rank = get_map_rank(new_map.map_id);
+  let map_elo = '';
+  if (map_rank.nb_scores >= 5) {
+    map_elo = ` ${Math.round(map_rank.elo)} elo,`;
+  }
 
   try {
     const sr = new_map.stars;
-    const flavor = `${sr.toFixed(2)}*, ${Math.round(map_elo.elo)} elo, ${Math.round(new_map.pp)}pp`;
+    const flavor = `${sr.toFixed(2)}*,${map_elo} ${Math.round(new_map.pp)}pp`;
     const map_name = `[https://osu.ppy.sh/beatmaps/${new_map.map_id} ${new_map.name}]`;
     const beatconnect_link = `[https://beatconnect.io/b/${new_map.set_id} [1]]`;
     const chimu_link = `[https://chimu.moe/d/${new_map.set_id} [2]]`;
@@ -121,7 +128,6 @@ async function select_next_map() {
 
 async function init_lobby(lobby) {
   lobby.match_participants = [];
-  lobby.dodgers = [];
 
   lobby.recent_maps = [];
   lobby.votekicks = [];
@@ -129,7 +135,7 @@ async function init_lobby(lobby) {
   lobby.select_next_map = select_next_map;
   lobby.data.type = 'ranked';
   lobby.match_end_timeout = -1;
-  lobby.median_elo = 1500;
+  lobby.median_mu = 0;
   lobby.extra_filters = '';
 
   // Mania is only 4K for now
@@ -151,7 +157,7 @@ async function init_lobby(lobby) {
       }
     }
 
-    update_median_elo(lobby);
+    update_median_mu(lobby);
 
     // Cannot select a map until we fetched the player IDs via !mp settings.
     if (lobby.created_just_now) {
@@ -161,19 +167,14 @@ async function init_lobby(lobby) {
   });
 
   lobby.on('playerJoined', async (player) => {
-    update_median_elo(lobby);
+    update_median_mu(lobby);
     if (lobby.players.length == 1) {
       await lobby.select_next_map();
     }
   });
 
   lobby.on('playerLeft', async (player) => {
-    // Dodgers get 0 score
-    if (lobby.match_participants.indexOf(player) != -1) {
-      lobby.dodgers.push(player);
-    }
-
-    update_median_elo(lobby);
+    update_median_mu(lobby);
     if (lobby.players.length == 0) {
       await set_new_title(lobby);
     }
@@ -213,27 +214,37 @@ async function init_lobby(lobby) {
   lobby.on('matchFinished', async (scores) => {
     clearTimeout(lobby.match_end_timeout);
     lobby.match_end_timeout = -1;
-
-    let match = null;
-    let game = null;
-    try {
-      match = await osu_fetch(`https://osu.ppy.sh/api/v2/matches/${lobby.id}`);
-      for (const event of match.events) {
-        if (event.game) {
-          game = event.game;
-        }
-      }
-
-      if (game == null) {
-        console.error(`No game found in match results, latest_event_id = ${match.latest_event_id}`);
-        throw new Error(`No game found in match results`);
-      }
-    } catch (err) {
-      capture_sentry_exception(err);
-    }
-
     await lobby.select_next_map();
-    await save_game_and_update_rating(lobby, game);
+
+    const fetch_last_match = async (tries) => {
+      if (tries > 5) {
+        console.error('Failed to get game results from API in lobby ' + lobby.id);
+        return;
+      }
+
+      let match = null;
+      let game = null;
+      try {
+        match = await osu_fetch(`https://osu.ppy.sh/api/v2/matches/${lobby.id}`);
+        for (const event of match.events) {
+          if (event.game) {
+            game = event.game;
+          }
+        }
+
+        if (game == null || game == lobby.data.last_game_id) {
+          setTimeout(() => fetch_last_match(tries++), 5000);
+          return;
+        }
+      } catch (err) {
+        capture_sentry_exception(err);
+      }
+
+      lobby.data.last_game_id = game.id;
+      save_game_and_update_rating(lobby, game);
+    };
+
+    setTimeout(() => fetch_last_match(0), 5000);
   });
 
   lobby.on('allPlayersReady', async () => {
@@ -250,7 +261,6 @@ async function init_lobby(lobby) {
     lobby.countdown = -1;
 
     lobby.match_participants = [];
-    lobby.dodgers = [];
     await lobby.send(`!mp settings ${Math.random().toString(36).substring(2, 6)}`);
   });
 

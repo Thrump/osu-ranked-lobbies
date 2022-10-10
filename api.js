@@ -1,9 +1,7 @@
-import * as fs from 'fs/promises';
 import fetch from 'node-fetch';
 import {promisify} from 'util';
 
 import Config from './util/config.js';
-import {capture_sentry_exception} from './util/helpers.js';
 
 
 let oauth_token = null;

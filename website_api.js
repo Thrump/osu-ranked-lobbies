@@ -243,6 +243,12 @@ async function register_routes(app) {
       }
     }
 
+    const ruleset_id = parseInt(req.body.ruleset, 10);
+    if (isNaN(ruleset_id) || ruleset_id < 0 || ruleset_id > 3) {
+      http_res.status(401).json({error: 'Invalid ruleset.'});
+      return;
+    }
+
     let user = db.prepare(`SELECT username FROM user WHERE user_id = ?`).get(req.user_id);
     if (!user) {
       // User has never played in a ranked lobby.

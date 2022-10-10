@@ -1559,10 +1559,10 @@ rimraf@^3.0.2:
   dependencies:
     glob "^7.1.3"
 
-rosu-pp@^0.4.0:
-  version "0.4.0"
-  resolved "https://registry.yarnpkg.com/rosu-pp/-/rosu-pp-0.4.0.tgz#f9a597c69d34988d33a5809d4fe29f319b282916"
-  integrity sha512-7TaEPQVCMbsvbVT80yidrb0EwiSCRwJJ2o1hmLVUty1BXr7JmGpGptEgNlGdmSdSn0D3lB5YmvZ1qsfbcRNNSg==
+rosu-pp@^0.8.0:
+  version "0.8.0"
+  resolved "https://registry.yarnpkg.com/rosu-pp/-/rosu-pp-0.8.0.tgz#470c5be2dab3def45ce8a8dba50d2bf11e193aca"
+  integrity sha512-1aMg+zr4vnbIHug2s4P8Xp3mPt9mzVEDSJglO4rMAdSzV8bT8TrUBKl/2+xMcToW0a+GflM/MZGAS9APRs7CVw==
   dependencies:
     cargo-cp-artifact "^0.1"
 

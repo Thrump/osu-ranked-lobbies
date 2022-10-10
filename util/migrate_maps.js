@@ -1,14 +1,10 @@
 // Script to migrate from Season 1 database format to Season 2.
 // Intended to be run once then thrown away.
 //
-// Instructions for myself:
-// 1. Locally, run `node util/migrate_maps.js`
-// 2. Locally, run `node util/add_pool.js` for each map pool
-// 3. Upload orl.db to the server
-// 3.1. On the server, extract the latest .osu map dump
-// 4. On the server, shut down the bot
-// 5. On the server, run `node util/migrate_users_and_lobbies.js`
-// 6. On the server, boot the bot back up
+// NOTE: This file has been repurposed to recalculate map elos.
+//       See commit aac039e7be74925779b59bb87be3475511f908ba
+//       if you just want to import a season 1 database.
+
 
 import * as fs from 'fs/promises';
 import {constants} from 'fs';
@@ -20,13 +16,11 @@ import {get_map_info} from '../map_scanner.js';
 
 async function migrate_maps() {
   const old_db = new Database('ranks.db');
-
-  // Ignore DMCA'd maps since those will only cause trouble
-  const maps = old_db.prepare(`SELECT id, name, set_id, mode, length, ranked, dmca FROM map WHERE dmca = 0`).all();
+  const maps = old_db.prepare(`SELECT map_id, name, set_id, mode, length, ranked FROM map`).all();
 
   let maps_to_dl = 0;
   for (const map of maps) {
-    const file = `maps/${parseInt(map.id, 10)}.osu`;
+    const file = `maps/${parseInt(map.map_id, 10)}.osu`;
     try {
       await fs.access(file, constants.F_OK);
     } catch (err) {
@@ -44,7 +38,7 @@ async function migrate_maps() {
   for (const map of maps) {
     try {
       // Despite what the name says, this actually saves the map in the database (as a side effect)
-      await get_map_info(map.id, {
+      await get_map_info(map.map_id, {
         mode_int: map.mode,
         total_length: map.length,
         beatmapset: {
@@ -52,7 +46,7 @@ async function migrate_maps() {
           ranked: map.ranked,
           title: map.name,
           availability: {
-            download_disabled: map.dmca,
+            download_disabled: 0,
           },
         },
       });

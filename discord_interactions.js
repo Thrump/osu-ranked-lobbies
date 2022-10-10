@@ -2,7 +2,6 @@ import crypto from 'crypto';
 import fs from 'fs';
 import {Client, Intents, MessageActionRow, MessageButton} from 'discord.js';
 
-import bancho from './bancho.js';
 import db from './database.js';
 import {capture_sentry_exception} from './util/helpers.js';
 import Config from './util/config.js';
@@ -98,13 +97,10 @@ async function on_link_osu_account_press(interaction) {
   }
 
   // Create ephemeral token
-
-  const discord_user_id = db.prepare(`SELECT discord_id FROM token WHERE token = ?`).get(ephemeral_token);
-
   const ephemeral_token = crypto.randomBytes(16).toString('hex');
   db.prepare(
       `INSERT INTO token (token, created_at, discord_id) VALUES (?, ?, ?)`,
-  ).run(interaction.user.id, Date.now(), ephemeral_token);
+  ).run(ephemeral_token, Date.now(), interaction.user.id);
 
   // Send authorization link
   await interaction.reply({

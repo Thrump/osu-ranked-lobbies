@@ -29,38 +29,6 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS rating_mode_idx ON rating(mode);
   CREATE INDEX IF NOT EXISTS rating_elo_idx  ON rating(elo);
 
-  CREATE TRIGGER IF NOT EXISTS rating_elo_itrigger
-  AFTER INSERT ON rating
-  FOR EACH ROW BEGIN
-      UPDATE rating
-      SET elo = (current_mu * 173.7178 + 1500 - 3 * current_sig * 173.7178)
-      WHERE rowid = NEW.rowid;
-  END;
-
-  CREATE TRIGGER IF NOT EXISTS rating_elo_utrigger
-  AFTER UPDATE OF current_mu, current_sig ON rating
-  FOR EACH ROW BEGIN
-      UPDATE rating
-      SET elo = (current_mu * 173.7178 + 1500 - 3 * current_sig * 173.7178)
-      WHERE rowid = NEW.rowid;
-
-      UPDATE user
-      SET osu_elo = NEW.elo
-      WHERE NEW.rowid = user.osu_rating AND NEW.mode = 0;
-
-      UPDATE user
-      SET taiko_elo = NEW.elo
-      WHERE NEW.rowid = user.taiko_rating AND NEW.mode = 1;
-
-      UPDATE user
-      SET catch_elo = NEW.elo
-      WHERE NEW.rowid = user.catch_rating AND NEW.mode = 2;
-
-      UPDATE user
-      SET mania_elo = NEW.elo
-      WHERE NEW.rowid = user.mania_rating AND NEW.mode = 3;
-  END;
-
 
   CREATE TABLE IF NOT EXISTS map (
     map_id        INTEGER PRIMARY KEY,
@@ -103,16 +71,16 @@ db.exec(`
     country_code    TEXT      NOT NULL,
     profile_data    TEXT      NOT NULL,
 
-    osu_elo         REAL      NOT NULL DEFAULT 1500,
+    osu_elo         REAL      NOT NULL,
     osu_rating      INTEGER   NOT NULL,
     osu_division    TEXT      NOT NULL DEFAULT 'Unranked',
-    taiko_elo       REAL      NOT NULL DEFAULT 1500,
+    taiko_elo       REAL      NOT NULL,
     taiko_rating    INTEGER   NOT NULL,
     taiko_division  TEXT      NOT NULL DEFAULT 'Unranked',
-    catch_elo       REAL      NOT NULL DEFAULT 1500,
+    catch_elo       REAL      NOT NULL,
     catch_rating    INTEGER   NOT NULL,
     catch_division  TEXT      NOT NULL DEFAULT 'Unranked',
-    mania_elo       REAL      NOT NULL DEFAULT 1500,
+    mania_elo       REAL      NOT NULL,
     mania_rating    INTEGER   NOT NULL,
     mania_division  TEXT      NOT NULL DEFAULT 'Unranked',
 
@@ -180,8 +148,7 @@ db.exec(`
 
     created_at   INTEGER NOT NULL,
     beatmap_id   INTEGER NOT NULL,
-    dodged       INTEGER NOT NULL,
-    won          INTEGER, -- never NULL because of score_won_trig
+    won          INTEGER NOT NULL,
 
     FOREIGN KEY(game_id)    REFERENCES game(game_id),
     FOREIGN KEY(user_id)    REFERENCES user(user_id),
@@ -189,13 +156,6 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS score_beatmap_idx ON score(beatmap_id);
   CREATE INDEX IF NOT EXISTS score_user_idx    ON score(user_id);
-
-  CREATE TRIGGER IF NOT EXISTS score_won_trig AFTER INSERT ON score
-  FOR EACH ROW BEGIN
-    UPDATE score
-    SET won = ((NOT dodged) AND pass AND (accuracy > 0.95))
-    WHERE rowid = NEW.rowid;
-  END;
 
 
   CREATE TABLE IF NOT EXISTS token (
