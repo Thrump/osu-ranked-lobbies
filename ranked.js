@@ -127,6 +127,8 @@ async function select_next_map() {
 
 
 async function init_lobby(lobby) {
+  if(!lobby.data.ruleset) lobby.data.ruleset = 0;
+
   lobby.match_participants = [];
 
   lobby.recent_maps = [];
@@ -227,7 +229,7 @@ async function init_lobby(lobby) {
       try {
         match = await osu_fetch(`https://osu.ppy.sh/api/v2/matches/${lobby.id}`);
         for (const event of match.events) {
-          if (event.game) {
+          if (event.game && event.game.end_time) {
             game = event.game;
           }
         }

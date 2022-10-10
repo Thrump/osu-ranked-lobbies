@@ -2,6 +2,7 @@ import db from './database.js';
 import {get_user_by_id} from './user.js';
 import Config from './util/config.js';
 import {capture_sentry_exception} from './util/helpers.js';
+import {get_user_ranks} from './glicko.js';
 
 
 let guild = null;
@@ -31,7 +32,7 @@ async function update_discord_username(osu_user_id, new_username, reason) {
   if (!guild) return;
 
   const user = await get_user_by_id(osu_user_id, false);
-  if (!user.discord_user_id) return;
+  if (!user) return;
 
   const member = await get_discord_member(user);
   if (!member) return;
@@ -48,7 +49,21 @@ async function update_discord_username(osu_user_id, new_username, reason) {
 async function update_division(osu_user_id) {
   // Get best available division for this user, without '++' suffix
   const info = get_user_ranks(osu_user_id);
+  if(!info) return;
+
+  let best_ruleset = {ratio: 0.0};
+  for (const ruleset of info) {
+    if (ruleset.ratio > best_ruleset.ratio) {
+      best_ruleset = ruleset;
+    }
+  }
+
   info.reduce((prev, curr) => prev.ratio > curr.ratio ? prev : curr);
+  if(!info.text) {
+    console.error('INFO:', info);
+    return;
+  }
+
   const new_division = info.text.split('+')[0];
 
   const discord_user = db.prepare(

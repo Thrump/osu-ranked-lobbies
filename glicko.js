@@ -256,8 +256,8 @@ async function save_game_and_update_rating(lobby, game) {
         rank_changes.push(`${player.username} [${Config.website_base_url}/u/${player.user_id}/ ▼ ${new_rank_text} ]`);
       }
 
-      db.prepare(`UPDATE user SET ${division_column} = ? WHERE user_id = ?`).run(new_rank_text, player.user_id);
-      update_division(player.user_id, new_rank_text); // async but don't care about result
+      db.prepare(`UPDATE user SET ${division_columns[game.mode_int]} = ? WHERE user_id = ?`).run(new_rank_text, player.user_id);
+      update_division(player.user_id); // async but don't care about result
     }
   }
 

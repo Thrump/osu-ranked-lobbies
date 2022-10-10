@@ -10,7 +10,7 @@ async function init_user(user_id, user_data) {
   }
 
   // Migrate old profiles
-  const discord_user_id = null;
+  let discord_user_id = null;
   const old_profile = db.prepare(`SELECT discord_id FROM old_discord_user WHERE osu_id = ?`).get(user_id);
   if (old_profile) {
     discord_user_id = old_profile.discord_id;
@@ -25,22 +25,22 @@ async function init_user(user_id, user_data) {
     return (elo - 1500) / 173.7178;
   };
 
-  const osu_mu = total_pp_to_mu(user_data.statistics_rulesets.osu?.pp);
+  const osu_mu = total_pp_to_mu(user_data.statistics_rulesets?.osu?.pp);
   const osu_rating = db.prepare(
       `INSERT INTO rating (mode, base_mu, current_mu) VALUES (0, ?, ?) RETURNING rowid`,
   ).get(osu_mu, osu_mu).rowid;
 
-  const taiko_mu = total_pp_to_mu(user_data.statistics_rulesets.taiko?.pp);
+  const taiko_mu = total_pp_to_mu(user_data.statistics_rulesets?.taiko?.pp);
   const taiko_rating = db.prepare(
       `INSERT INTO rating (mode, base_mu, current_mu) VALUES (1, ?, ?) RETURNING rowid`,
   ).get(taiko_mu, taiko_mu).rowid;
 
-  const catch_mu = total_pp_to_mu(user_data.statistics_rulesets.fruits?.pp);
+  const catch_mu = total_pp_to_mu(user_data.statistics_rulesets?.fruits?.pp);
   const catch_rating = db.prepare(
       `INSERT INTO rating (mode, base_mu, current_mu) VALUES (2, ?, ?) RETURNING rowid`,
   ).get(catch_mu, catch_mu).rowid;
 
-  const mania_mu = total_pp_to_mu(user_data.statistics_rulesets.mania?.pp);
+  const mania_mu = total_pp_to_mu(user_data.statistics_rulesets?.mania?.pp);
   const mania_rating = db.prepare(
       `INSERT INTO rating (mode, base_mu, current_mu) VALUES (3, ?, ?) RETURNING rowid`,
   ).get(mania_mu, mania_mu).rowid;

@@ -17,7 +17,7 @@ import Database from 'better-sqlite3';
 
 const discord = new Database('discord.db');
 const old_db = new Database('ranks.db');
-new_db.pragma('JOURNAL_MODE = WAL');
+old_db.pragma('JOURNAL_MODE = WAL');
 
 const new_db = new Database('orl.db');
 new_db.pragma('count_changes = OFF');

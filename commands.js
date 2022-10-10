@@ -89,7 +89,8 @@ async function rank_command(msg, match, lobby) {
     return;
   }
 
-  const rank_info = ranks[lobby.data.ruleset];
+  const ruleset = lobby ? lobby.data.ruleset : 0; // TODO fix later lol
+  const rank_info = ranks[ruleset];
   const fancy_elo = rank_info.elo == '???' ? '???' : Math.round(rank_info.elo);
   await reply(msg.from, lobby, `[${Config.website_base_url}/u/${user_id}/ ${requested_username}] | Rank: ${rank_info.text} (#${rank_info.rank_nb}) | Elo: ${fancy_elo} | Games played: ${rank_info.nb_scores}`);
 }

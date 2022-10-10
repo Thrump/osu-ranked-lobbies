@@ -90,7 +90,7 @@ async function on_link_osu_account_press(interaction) {
   if (user) {
     await interaction.member.roles.add(Config.discord_linked_account_role_id);
     await interaction.reply({
-      content: 'You already linked your account 👉 https://osu.ppy.sh/users/' + user.osu_id,
+      content: 'You already linked your account 👉 https://osu.ppy.sh/users/' + user.user_id,
       ephemeral: true,
     });
     return;

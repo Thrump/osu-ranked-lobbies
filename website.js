@@ -171,7 +171,7 @@ async function listen() {
     }
 
     // Check if user didn't already link their account
-    res = db.prepare(`SELECT * FROM user WHERE discord_user_id = ?`).get(discord_user_id);
+    res = db.prepare(`SELECT * FROM user WHERE discord_user_id = ?`).get(discord_user_id.discord_id);
     if (res) {
       http_res.redirect('/success');
       return;
@@ -184,7 +184,7 @@ async function listen() {
     if (user_profile === null) return;
 
     // Link accounts! Finally.
-    db.prepare(`UPDATE user SET discord_user_id = ? WHERE user_id = ?`).run(discord_user_id, user_profile.id);
+    db.prepare(`UPDATE user SET discord_user_id = ? WHERE user_id = ?`).run(discord_user_id.discord_id, user_profile.id);
     db.prepare(`DELETE FROM token WHERE token = ?`).run(ephemeral_token);
     http_res.redirect('/success');
 

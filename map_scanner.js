@@ -3,7 +3,7 @@ import {constants} from 'fs';
 import {createRequire} from 'module';
 import fetch from 'node-fetch';
 const require = createRequire(import.meta.url);
-const rosu = require('rosu-pp');
+// const rosu = require('rosu-pp');
 
 import {osu_fetch} from './api.js';
 import db from './database.js';
@@ -15,6 +15,8 @@ async function get_map_info(map_id, api_res) {
   if (map) {
     return map;
   }
+
+  throw new Error('rosu-pp disabled');
 
   // 1. Download the map
   // Looking for .osu files? peppy provides monthly dumps here: https://data.ppy.sh/
