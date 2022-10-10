@@ -242,6 +242,8 @@ async function save_game_and_update_rating(lobby, game) {
   const division_columns = ['osu_division', 'taiko_division', 'catch_division', 'mania_division'];
   const all_users = db.prepare(`SELECT COUNT(*) AS nb FROM rating WHERE mode = ?`).get(game.mode_int);
   for (const player of players) {
+    if(player[rating_columns[game.mode_int]].nb_scores < 5) continue;
+
     const better_users = db.prepare(
         `SELECT COUNT(*) AS nb FROM rating WHERE mode = ? AND elo > ?`,
     ).get(game.mode_int, player[rating_columns[game.mode_int]].elo);

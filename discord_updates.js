@@ -20,7 +20,7 @@ async function get_discord_member(user) {
     console.error(`[Discord] <@${user.discord_user_id}> left the discord server: ${err}`);
     db.prepare(`
       UPDATE user
-      SET    discord_user_id = NULL, discord_rank = NULL
+      SET    discord_user_id = NULL, discord_role = NULL
       WHERE  user_id = ?
     `).run(osu_user_id);
     return null;
@@ -58,14 +58,7 @@ async function update_division(osu_user_id) {
     }
   }
 
-  info.reduce((prev, curr) => prev.ratio > curr.ratio ? prev : curr);
-  if(!info.text) {
-    console.error('INFO:', info);
-    return;
-  }
-
-  const new_division = info.text.split('+')[0];
-
+  const new_division = best_ruleset.text.split('+')[0];
   const discord_user = db.prepare(
       `SELECT discord_role, discord_user_id FROM user WHERE user_id = ?`,
   ).get(osu_user_id);

@@ -13,7 +13,7 @@ async function set_new_title(lobby) {
   const ruleset = gamemodes[lobby.data.ruleset];
 
   if (lobby.players.length > 0) {
-    new_title = `${Math.round(lobby.map.stars, 0.1)}* | o!RL ${ruleset} (!info)`;
+    new_title = `${Math.round(lobby.map.stars, 0.01)}* | o!RL ${ruleset} (!info)`;
   } else {
     new_title = `o!RL ${ruleset} (!info)`;
   }

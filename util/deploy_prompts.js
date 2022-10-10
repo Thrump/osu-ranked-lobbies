@@ -29,7 +29,6 @@ To access text channels, link your account with the button below.`,
     });
 
     const faq_channel = client.channels.cache.get(Config.discord_faq_channel_id);
-
     await faq_channel.send({
       embeds: [
         new MessageEmbed({
