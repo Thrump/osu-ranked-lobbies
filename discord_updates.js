@@ -51,7 +51,7 @@ async function update_division(osu_user_id) {
   const info = get_user_ranks(osu_user_id);
   if (!info) return;
 
-  let best_ruleset = {nb_scores: 0};
+  let best_ruleset = {nb_scores: -1};
   for (const ruleset of info) {
     if (ruleset.nb_scores > best_ruleset.nb_scores) {
       best_ruleset = ruleset;
@@ -64,6 +64,8 @@ async function update_division(osu_user_id) {
   ).get(osu_user_id);
   const old_role = discord_user.discord_role;
   if (old_role == new_division) return;
+  console.log(`[Discord] Should update discord role for user ${osu_user_id}: ${old_role} -> ${new_division}`);
+
   const member = await get_discord_member(discord_user);
   if (!member) return;
 
