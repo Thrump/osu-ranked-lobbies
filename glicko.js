@@ -85,7 +85,7 @@ async function update_rating(entity, ratings, is_player) {
     if (!Array.isArray(score.mods)) {
       score.mods = JSON.parse(score.mods);
     }
-    const allowed_mods = ['HR', 'SD', 'PF', 'DT', 'NC', 'FI', 'FL', 'MR'];
+    const allowed_mods = ['HD', 'HR', 'SD', 'PF', 'DT', 'NC', 'FI', 'FL', 'MR'];
     let ignore_score = false;
     for (const mod of score.mods) {
       if (allowed_mods.indexOf(mod) == -1) {
@@ -392,4 +392,4 @@ function get_user_ranks(user_id) {
   ];
 }
 
-export {save_game_and_update_rating, get_map_rank, get_user_ranks};
+export {save_game_and_update_rating, get_map_rank, get_user_ranks, update_rating};
