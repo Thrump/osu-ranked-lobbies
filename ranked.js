@@ -73,8 +73,8 @@ async function select_next_map() {
   clearTimeout(this.countdown);
   this.countdown = -1;
 
-  if (this.recent_maps.length >= 25) {
-    this.recent_maps.shift();
+  if (this.data.recent_maps.length >= Config.map_bucket_size) {
+    this.data.recent_maps.shift();
   }
 
   const select_map = () => {
@@ -82,15 +82,15 @@ async function select_next_map() {
       SELECT * FROM (
         SELECT * FROM map
         INNER JOIN rating ON rating.rowid = map.rating_id
-        WHERE season2 > 0 AND dmca = 0 AND map.mode = ?
+        WHERE season2 > 0 AND dmca = 0 AND map.mode = ? AND ABS(current_mu - ?) < ?
         ${this.extra_filters}
         ORDER BY ABS(current_mu - ?) ASC LIMIT ?
       ) ORDER BY RANDOM() LIMIT 1`,
-    ).get(this.data.ruleset, this.median_mu, Config.map_bucket_size);
+    ).get(this.data.ruleset, this.median_mu, Config.max_mu_diff, this.median_mu, Config.map_bucket_size);
   };
 
   let new_map = select_map();
-  if (!new_map || this.recent_maps.includes(new_map.map_id)) {
+  if (!new_map || this.data.recent_maps.includes(new_map.map_id)) {
     new_map = add_map_to_season(this);
     if (!new_map) {
       // Just pick any map...
@@ -98,7 +98,7 @@ async function select_next_map() {
     }
   }
 
-  this.recent_maps.push(new_map.map_id);
+  this.data.recent_maps.push(new_map.map_id);
   const map_rank = get_map_rank(new_map.map_id);
   let map_elo = '';
   if (map_rank.nb_scores >= 5) {
@@ -124,10 +124,10 @@ async function select_next_map() {
 
 async function init_lobby(lobby) {
   if (!lobby.data.ruleset) lobby.data.ruleset = 0;
+  if (!lobby.data.recent_maps) lobby.data.recent_maps = [];
 
   lobby.match_participants = [];
 
-  lobby.recent_maps = [];
   lobby.votekicks = [];
   lobby.countdown = -1;
   lobby.select_next_map = select_next_map;

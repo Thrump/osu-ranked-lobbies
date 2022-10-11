@@ -8,6 +8,7 @@
     "osu_v2api_client_id": 1234,
     "osu_v2api_client_secret": "get it here: https://osu.ppy.sh/home/account/edit#new-oauth-application",
     "map_bucket_size": 100,
+    "max_mu_diff": 1.0,
     "max_lobbies": 1,
 
     "CONNECT_TO_DISCORD": false,
