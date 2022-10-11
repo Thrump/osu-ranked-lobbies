@@ -123,7 +123,7 @@ async function select_next_map() {
 
 
 async function init_lobby(lobby) {
-  if(!lobby.data.ruleset) lobby.data.ruleset = 0;
+  if (!lobby.data.ruleset) lobby.data.ruleset = 0;
 
   lobby.match_participants = [];
 
@@ -270,6 +270,8 @@ async function init_lobby(lobby) {
 
     // Lobbies are ScoreV1 - but we ignore the results and get the full score info from osu's API.
     await lobby.send(`!mp set 0 0 16`);
+
+    await set_new_title(lobby);
   } else {
     let restart_msg = 'restarted';
     if (lobby.data.restart_msg) {
