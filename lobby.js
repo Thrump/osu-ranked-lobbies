@@ -104,11 +104,11 @@ class BanchoLobby extends EventEmitter {
 
           // Used for !skip command
           for (const player of this.players) {
-            if (typeof player.matches_finished !== 'undefined') {
-              player.matches_finished++;
-            } else {
-              player.matches_finished = 1;
+            if (!player.matches_finished) {
+              player.matches_finished = 0;
             }
+
+            player.matches_finished++;
           }
 
           this.emit('matchFinished');
