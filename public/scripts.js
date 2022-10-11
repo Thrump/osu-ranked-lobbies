@@ -208,7 +208,7 @@ async function render_leaderboard(ruleset, page_num) {
   }
 
   const pagi_div = template.querySelector('.pagination');
-  render_pagination(pagi_div, json.page, json.max_pages, (num) => `/leaderboard/osu/page-${num}/`);
+  render_pagination(pagi_div, json.page, json.max_pages, (num) => `/leaderboard/${ruleset}/page-${num}/`);
 
   document.querySelector('main').appendChild(template);
 }
@@ -267,7 +267,7 @@ async function render_user(user_id, ruleset, page_num) {
   }
 
   const pagi_div = document.querySelector('.pagination');
-  render_pagination(pagi_div, matches_json.page, matches_json.max_pages, (num) => `/u/${user_id}/page-${num}/`);
+  render_pagination(pagi_div, matches_json.page, matches_json.max_pages, (num) => `/u/${user_id}/${ruleset}/page-${num}/`);
 }
 
 
