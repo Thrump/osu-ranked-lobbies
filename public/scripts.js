@@ -2,6 +2,15 @@ let m;
 let user_id = null;
 
 
+function fancy_elo(elo) {
+  if (elo == '???') {
+    return '???';
+  } else {
+    return Math.round(elo);
+  }
+}
+
+
 // Returns the color of a given star rating, matching osu!web's color scheme.
 function stars_to_color(sr) {
   if (sr <= 0.1) {
@@ -181,7 +190,7 @@ async function render_leaderboard(ruleset, page_num) {
   if (json.the_one) {
     template.querySelector('.leaderboard-focus').innerHTML += `
       <p class="username"><a href="/u/${json.the_one.user_id}/">${json.the_one.username}</a></p>
-      <p class="elo-value">${json.the_one.elo}</p>
+      <p class="elo-value">${fancy_elo(json.the_one.elo)}</p>
       <p class="elo">ELO</p>`;
   } else {
     template.querySelector('.leaderboard-focus').remove();
@@ -193,7 +202,7 @@ async function render_leaderboard(ruleset, page_num) {
       <tr>
         <td>${player.ranking}</td>
         <td><a href="/u/${player.user_id}/">${player.username}</a></td>
-        <td>${player.elo}</td>
+        <td>${fancy_elo(player.elo)}</td>
         <td>ELO</td>
       </tr>`;
   }
@@ -233,10 +242,10 @@ async function render_user(user_id, ruleset, page_num) {
   if (json.ranks[mode].rank_nb >= 5) {
     blocks[0].innerHTML = `<span>${json.ranks[mode].text}</span><span>Rank #${json.ranks[mode].rank_nb}</span>`;
     blocks[1].innerHTML = `<span>${json.ranks[mode].nb_scores}</span><span>Games Played</span>`;
-    blocks[2].innerHTML = `<span>${json.ranks[mode].elo}</span><span>Elo</span>`;
+    blocks[2].innerHTML = `<span>${fancy_elo(json.ranks[mode].elo)}</span><span>Elo</span>`;
   } else {
     blocks[0].innerHTML = `<span>Unranked</span><span>Rank #???</span>`;
-    blocks[1].innerHTML = `<span>${json.ranks[mode].rank_nb}</span><span>Games Played</span>`;
+    blocks[1].innerHTML = `<span>${json.ranks[mode].nb_scores}</span><span>Games Played</span>`;
     blocks[2].remove();
   }
   document.querySelector('main').appendChild(template);
@@ -434,7 +443,6 @@ if (searchField) {
               searchResults.innerHTML += `
               <a href="/u/${player.user_id}" class="search-result-item">
                 <span>${player.username}</span>
-                <span>${Math.trunc(player.elo)}</span>
               </a>
             `;
             });
