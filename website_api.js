@@ -143,7 +143,7 @@ async function get_user_matches(user_id, ruleset, page_num) {
 
   // Fix user-provided page number
   const MATCHES_PER_PAGE = 20;
-  const nb_pages = Math.ceil(user.nb_scores / MATCHES_PER_PAGE);
+  const nb_pages = Math.ceil(total_scores.nb / MATCHES_PER_PAGE);
   if (page_num <= 0 || isNaN(page_num)) {
     page_num = 1;
   }

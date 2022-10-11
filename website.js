@@ -263,12 +263,17 @@ async function listen() {
       }
 
       // Keep the best rank only
-      info.reduce((prev, curr) => prev.ratio > curr.ratio ? prev : curr);
+      let rank = {nb_scores: -1};
+      for (const i of info) {
+        if (i.nb_scores > rank.nb_scores) {
+          rank = i;
+        }
+      }
 
       http_res.send(`<html>
         <head>
           <meta content="${user.username} - o!RL" property="og:title" />
-          <meta content="#${info.rank_nb} - ${info.text}" property="og:description" />
+          <meta content="#${rank.rank_nb} - ${rank.text}" property="og:description" />
           <meta content="https://osu.kiwec.net/u/${user.user_id}" property="og:url" />
           <meta content="https://s.ppy.sh/a/${user.user_id}" property="og:image" />
         </head>

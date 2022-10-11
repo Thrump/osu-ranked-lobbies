@@ -213,7 +213,12 @@ async function render_user(user_id, ruleset, page_num) {
   const rulesets2 = ['osu', 'taiko', 'fruits', 'mania'];
   let mode = rulesets.indexOf(ruleset);
   if (mode == -1) {
-    const best_rank = json.ranks.reduce((prev, curr) => prev.ratio > curr.ratio ? prev : curr);
+    let best_rank = {nb_scores: -1};
+    for (const rank of json.ranks) {
+      if (rank.nb_scores > best_rank.nb_scores) {
+        best_rank = rank;
+      }
+    }
     mode = best_rank.mode;
     ruleset = rulesets[mode];
   }
@@ -225,9 +230,15 @@ async function render_user(user_id, ruleset, page_num) {
   template.querySelector('.heading-right .subheading').href = `https://osu.ppy.sh/users/${json.user_id}`;
 
   const blocks = template.querySelectorAll('.user-focus-block');
-  blocks[0].innerHTML = `<span>${json.ranks[mode].text}</span><span>Rank #${json.ranks[mode].rank_nb}</span>`;
-  blocks[1].innerHTML = `<span>${json.ranks[mode].nb_scores}</span><span>Games Played</span>`;
-  blocks[2].innerHTML = `<span>${json.ranks[mode].elo}</span><span>Elo</span>`;
+  if (json.ranks[mode].rank_nb >= 5) {
+    blocks[0].innerHTML = `<span>${json.ranks[mode].text}</span><span>Rank #${json.ranks[mode].rank_nb}</span>`;
+    blocks[1].innerHTML = `<span>${json.ranks[mode].nb_scores}</span><span>Games Played</span>`;
+    blocks[2].innerHTML = `<span>${json.ranks[mode].elo}</span><span>Elo</span>`;
+  } else {
+    blocks[0].innerHTML = `<span>Unranked</span><span>Rank #???</span>`;
+    blocks[1].innerHTML = `<span>${json.ranks[mode].rank_nb}</span><span>Games Played</span>`;
+    blocks[2].remove();
+  }
   document.querySelector('main').appendChild(template);
 
   const matches_json = await get(`/api/user/${user_id}/${ruleset}/matches/${page_num}`);
@@ -238,9 +249,8 @@ async function render_user(user_id, ruleset, page_num) {
       <td class="map">
         <a href="https://osu.ppy.sh/beatmapsets/${match.map.set_id}#${rulesets2[mode]}/${match.map.id}"></a>
       </td>
-      <td>${match.placement}/${match.players_in_match}</td>
-      <td ${match.negative ? 'class="red"' : ''} ${match.positive ? 'class="green"' : ''}>
-        ${match.positive ? '+' : ''}${match.elo_change}
+      <td ${match.won ? 'class="green"' : 'class="red"'}>
+        ${match.won ? 'WON' : 'LOST'}
       </td>
       <td data-tms="${match.tms}">${match.time}</td>`;
     row.querySelector('.map a').innerText = match.map.name;

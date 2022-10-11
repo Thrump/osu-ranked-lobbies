@@ -49,11 +49,11 @@ async function update_discord_username(osu_user_id, new_username, reason) {
 async function update_division(osu_user_id) {
   // Get best available division for this user, without '++' suffix
   const info = get_user_ranks(osu_user_id);
-  if(!info) return;
+  if (!info) return;
 
-  let best_ruleset = {ratio: 0.0};
+  let best_ruleset = {nb_scores: 0};
   for (const ruleset of info) {
-    if (ruleset.ratio > best_ruleset.ratio) {
+    if (ruleset.nb_scores > best_ruleset.nb_scores) {
       best_ruleset = ruleset;
     }
   }

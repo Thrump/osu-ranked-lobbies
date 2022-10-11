@@ -10,6 +10,7 @@ import db from './database.js';
 import {update_division} from './discord_updates.js';
 import Config from './util/config.js';
 import {get_user_by_id} from './user.js';
+import {capture_sentry_exception} from './util/helpers.js';
 
 
 const RANK_DIVISIONS = [
@@ -158,13 +159,21 @@ async function save_game_and_update_rating(lobby, game) {
   const tms = Date.parse(game.end_time).valueOf();
   const rating_columns = ['osu_rating', 'taiko_rating', 'catch_rating', 'mania_rating'];
 
-  db.prepare(`INSERT INTO game (
-    game_id, match_id, start_time, end_time, beatmap_id,
-    play_mode, scoring_type, team_type, mods
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      game.id, lobby.id, Date.parse(game.start_time).valueOf(), tms, game.beatmap.id,
-      game.mode_int, game.scoring_type, game.team_type, JSON.stringify(game.mods),
-  );
+  try {
+    db.prepare(`INSERT INTO game (
+      game_id, match_id, start_time, end_time, beatmap_id,
+      play_mode, scoring_type, team_type, mods
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        game.id, lobby.id, Date.parse(game.start_time).valueOf(), tms, game.beatmap.id,
+        game.mode_int, game.scoring_type, game.team_type, JSON.stringify(game.mods),
+    );
+  } catch (err) {
+    if (err.message != 'UNIQUE constraint failed: game.game_id') {
+      capture_sentry_exception(err);
+    }
+
+    return;
+  }
 
   const players = [];
   for (const score of game.scores) {
@@ -209,7 +218,7 @@ async function save_game_and_update_rating(lobby, game) {
 
   // Update player ratings
   for (const score of game.scores) {
-    const user_rating = score.player[rating_columns[game.mode_int]];
+    const user_rating = score.player.ratings[game.mode_int];
     user_rating.nb_scores++;
 
     // All scores+ratings of maps played by the user after base_score_id
@@ -242,11 +251,11 @@ async function save_game_and_update_rating(lobby, game) {
   const division_columns = ['osu_division', 'taiko_division', 'catch_division', 'mania_division'];
   const all_users = db.prepare(`SELECT COUNT(*) AS nb FROM rating WHERE mode = ?`).get(game.mode_int);
   for (const player of players) {
-    if(player[rating_columns[game.mode_int]].nb_scores < 5) continue;
+    if (player[rating_columns[game.mode_int]].nb_scores < 5) continue;
 
     const better_users = db.prepare(
         `SELECT COUNT(*) AS nb FROM rating WHERE mode = ? AND elo > ?`,
-    ).get(game.mode_int, player[rating_columns[game.mode_int]].elo);
+    ).get(game.mode_int, player.ratings[game.mode_int].elo);
     const ratio = 1.0 - (better_users.nb / all_users.nb);
     const old_rank_text = player[division_columns[game.mode_int]];
     const new_rank_text = get_rank_text(ratio, all_users.nb);

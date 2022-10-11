@@ -73,6 +73,13 @@ function populate_ratings(user) {
   user.taiko_rating = get_rating.get(user.taiko_rating);
   user.catch_rating = get_rating.get(user.catch_rating);
   user.mania_rating = get_rating.get(user.mania_rating);
+
+  user.ratings = [
+    user.osu_rating,
+    user.taiko_rating,
+    user.catch_rating,
+    user.mania_rating,
+  ];
 }
 
 

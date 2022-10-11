@@ -29,23 +29,19 @@ async function set_new_title(lobby) {
 }
 
 function update_median_mu(lobby) {
-  const rating_fields = ['osu_rating', 'taiko_rating', 'catch_rating', 'mania_rating'];
-
-  const mus = [];
+  let total = 0;
+  let factor = 0;
   for (const player of lobby.players) {
-    mus.push(player[rating_fields[lobby.data.ruleset]].current_mu);
+    const rating = player.ratings[lobby.data.ruleset];
+    const sig_diff = (351 / 173.7178 - rating.current_sig);
+    factor += sig_diff;
+    total += rating.current_mu * sig_diff;
   }
 
-  if (mus.length == 0) {
+  if (total == 0) {
     lobby.median_mu = 0;
-    return;
-  }
-
-  const middle = Math.floor(mus.length / 2);
-  if (mus.length % 2 == 0) {
-    lobby.median_mu = (mus[middle - 1] + mus[middle]) / 2;
   } else {
-    lobby.median_mu = mus[middle];
+    lobby.median_mu = total / factor;
   }
 }
 
