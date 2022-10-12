@@ -168,7 +168,7 @@ class BanchoLobby extends EventEmitter {
               this.host = player;
             }
 
-            if (!this.players.some((p) = p.user_id == player.user_id)) {
+            if (!this.players.some((p) => p.user_id == player.user_id)) {
               this.players.push(player);
             }
             this.players_to_parse--;
@@ -194,7 +194,7 @@ class BanchoLobby extends EventEmitter {
           // player joined
           get_user_by_name(m[1]).then((player) => {
             player.irc_username = m[1];
-            if (!this.players.some((p) = p.user_id == player.user_id)) {
+            if (!this.players.some((p) => p.user_id == player.user_id)) {
               this.players.push(player);
             }
             this.emit('playerJoined', player);
