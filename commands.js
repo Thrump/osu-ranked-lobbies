@@ -200,6 +200,11 @@ async function ban_command(msg, match, lobby) {
 }
 
 async function skip_command(msg, match, lobby) {
+  if (lobby.players.length < 5) {
+    await lobby.select_next_map();
+    return;
+  }
+
   // Skip map if DMCA'd
   // When bot just joined the lobby, beatmap_id is null.
   if (lobby.beatmap_id && !lobby.map_data) {
