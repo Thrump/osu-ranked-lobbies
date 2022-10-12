@@ -59,7 +59,7 @@ async function select_next_map() {
       SELECT * FROM (
         SELECT * FROM map
         INNER JOIN rating ON rating.rowid = map.rating_id
-        WHERE (ranked = 4 OR season2 > 0) AND dmca = 0 AND map.mode = ?
+        WHERE (ranked = 4 OR season2 > 0) AND dmca = 0 AND map.mode = ? AND stars >= 3
         ${this.extra_filters}
         ORDER BY ABS(current_mu - ?) ASC LIMIT ?
       ) ORDER BY RANDOM() LIMIT 1`,
