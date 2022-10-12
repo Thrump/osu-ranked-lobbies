@@ -46,29 +46,6 @@ function update_median_mu(lobby) {
 }
 
 
-// When a map gets picked twice in the last 25 games, we automatically add
-// another map to the pool.
-function add_map_to_season(lobby) {
-  const map = db.prepare(`
-    SELECT * FROM map
-    INNER JOIN rating ON rating.rowid = map.rating_id
-    WHERE season2 = 0 AND dmca = 0 AND ranked IN (4, 5, 7) AND map.mode = ?
-    ${lobby.extra_filters}
-    ORDER BY ABS(current_mu - ?) ASC LIMIT 1`,
-  ).get(lobby.data.ruleset, lobby.median_mu);
-  if (!map) {
-    // o_O
-    capture_sentry_exception(new Error('RAN OUT OF MAPS!!!!! LOL'));
-    return null;
-  }
-
-  db.prepare(
-      `UPDATE map SET season2 = ? WHERE map_id = ?`,
-  ).run(Date.now(), map.map_id);
-
-  return map;
-}
-
 async function select_next_map() {
   clearTimeout(this.countdown);
   this.countdown = -1;
@@ -82,19 +59,18 @@ async function select_next_map() {
       SELECT * FROM (
         SELECT * FROM map
         INNER JOIN rating ON rating.rowid = map.rating_id
-        WHERE season2 > 0 AND dmca = 0 AND map.mode = ? AND ABS(current_mu - ?) < ?
+        WHERE (ranked = 4 OR season2 > 0) AND dmca = 0 AND map.mode = ?
         ${this.extra_filters}
         ORDER BY ABS(current_mu - ?) ASC LIMIT ?
       ) ORDER BY RANDOM() LIMIT 1`,
-    ).get(this.data.ruleset, this.median_mu, Config.max_mu_diff, this.median_mu, Config.map_bucket_size);
+    ).get(this.data.ruleset, this.median_mu, Config.map_bucket_size);
   };
 
-  let new_map = select_map();
-  if (!new_map || this.data.recent_maps.includes(new_map.map_id)) {
-    new_map = add_map_to_season(this);
-    if (!new_map) {
-      // Just pick any map...
-      new_map = select_map();
+  let new_map = null;
+  for (let i = 0; i < 10; i++) {
+    new_map = select_map();
+    if (!this.data.recent_maps.includes(new_map.map_id)) {
+      break;
     }
   }
 
